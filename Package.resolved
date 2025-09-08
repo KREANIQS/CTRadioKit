@@ -1,0 +1,15 @@
+{
+  "originHash" : "8429211ed9d7364f5ab31d7a9c5270b0f5f1239f3c77e9e0fe181e63b40a0322",
+  "pins" : [
+    {
+      "identity" : "ctswiftlogger",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/KREANIQS/CTSwiftLogger",
+      "state" : {
+        "branch" : "main",
+        "revision" : "ce1ae3bc24746998b3d5fe148cca98c51b6d1428"
+      }
+    }
+  ],
+  "version" : 3
+}
