@@ -1,7 +1,6 @@
 import Combine
 import CTSwiftLogger
 import Foundation
-import CTRadioKit
 
 extension RadioStation {
     var isManual: Bool {
