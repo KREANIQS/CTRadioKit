@@ -1,5 +1,5 @@
 //
-//  ArtworkCacheManager.swift
+//  CTRKRadioStationFavIconCacheManager.swift
 //  Pladio
 //
 //  Created by Patrick @ DIEZIs on 28.08.2025.
@@ -12,22 +12,21 @@ import UIKit
 import AppKit
 #endif
 
-@MainActor
-final class RadioStationFavIconCacheManager: ObservableObject {
-    static let shared = RadioStationFavIconCacheManager()
-    private init() {}
+@MainActor public final class CTRKRadioStationFavIconCacheManager: ObservableObject {
+    public static let shared = CTRKRadioStationFavIconCacheManager()
+    public init() {}
 
     #if os(iOS)
-    @Published private(set) var cachedImages: [String: UIImage] = [:]
+    @Published public private(set) var cachedImages: [String: UIImage] = [:]
 
     /// Returns an image from the in-memory cache only. No disk I/O. No state mutation.
     /// Safe to call from SwiftUI `body`.
-    func imageInMemory(for stationID: String) -> UIImage? {
+    public func imageInMemory(for stationID: String) -> UIImage? {
         cachedImages[stationID]
     }
 
     @available(*, deprecated, message: "Avoid calling from SwiftUI body; use imageInMemory(for:) + loadCachedImageIfNeededAsync(for:) instead.")
-    func loadCachedImage(for stationID: String) -> UIImage? {
+    public func loadCachedImage(for stationID: String) -> UIImage? {
         if let image = cachedImages[stationID] {
             return image
         }
@@ -41,7 +40,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
         return image
     }
 
-    func saveImage(_ image: UIImage, for stationID: String) {
+    public func saveImage(_ image: UIImage, for stationID: String) {
         cachedImages[stationID] = image
         let key = stationID as NSString
         Self.memoryCache.setObject(image, forKey: key)
@@ -53,7 +52,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
 
     /// Triggers an async disk load if the image is not in memory yet.
     /// Call from `.task`/`onAppear` (NOT from inside `body`) together with `imageInMemory(for:)`.
-    func loadCachedImageIfNeededAsync(for stationID: String) {
+    public func loadCachedImageIfNeededAsync(for stationID: String) {
         guard cachedImages[stationID] == nil else { return }
 
         Task.detached {
@@ -70,16 +69,16 @@ final class RadioStationFavIconCacheManager: ObservableObject {
         }
     }
     #elseif os(macOS)
-    @Published private(set) var cachedImages: [String: NSImage] = [:]
+    @Published public private(set) var cachedImages: [String: NSImage] = [:]
 
     /// Returns an image from the in-memory cache only. No disk I/O. No state mutation.
     /// Safe to call from SwiftUI `body`.
-    func imageInMemory(for stationID: String) -> NSImage? {
+    public func imageInMemory(for stationID: String) -> NSImage? {
         cachedImages[stationID]
     }
 
     @available(*, deprecated, message: "Avoid calling from SwiftUI body; use imageInMemory(for:) + loadCachedImageIfNeededAsync(for:) instead.")
-    func loadCachedImage(for stationID: String) -> NSImage? {
+    public func loadCachedImage(for stationID: String) -> NSImage? {
         if let image = cachedImages[stationID] {
             return image
         }
@@ -94,7 +93,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
     }
 
     @discardableResult
-    func saveImage(_ image: NSImage, for stationID: String) -> Bool {
+    public func saveImage(_ image: NSImage, for stationID: String) -> Bool {
         cachedImages[stationID] = image
         let key = stationID as NSString
         Self.memoryCache.setObject(image, forKey: key)
@@ -114,7 +113,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
 
     /// Triggers an async disk load if the image is not in memory yet.
     /// Call from `.task`/`onAppear` (NOT from inside `body`) together with `imageInMemory(for:)`.
-    func loadCachedImageIfNeededAsync(for stationID: String) {
+    public func loadCachedImageIfNeededAsync(for stationID: String) {
         guard cachedImages[stationID] == nil else { return }
 
         Task.detached {
@@ -134,25 +133,25 @@ final class RadioStationFavIconCacheManager: ObservableObject {
     #endif
 
     /// Number of images in the published SwiftUI-reactive dictionary
-    func publishedCacheCount() -> Int {
+    public func publishedCacheCount() -> Int {
         cachedImages.count
     }
 
     /// Number of images currently tracked in NSCache via memoryCacheKeySet
-    func memoryCacheCount() -> Int {
+    public func memoryCacheCount() -> Int {
         Self.memoryCacheKeySet.count
     }
 
     /// Union of both caches (unique stationIDs across published and NSCache)
-    func totalUniqueCachedCount() -> Int {
+    public func totalUniqueCachedCount() -> Int {
         Set(cachedImages.keys).union(Self.memoryCacheKeySet).count
     }
     
-    static func cacheDirectory() -> URL {
+    public static func cacheDirectory() -> URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
     }
 
-    static func sanitizedFileName(for stationID: String) -> String {
+    public static func sanitizedFileName(for stationID: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>#")
         return stationID
             .components(separatedBy: invalidCharacters)
@@ -160,12 +159,12 @@ final class RadioStationFavIconCacheManager: ObservableObject {
             .replacingOccurrences(of: " ", with: "_")
     }
 
-    static func fileURL(for stationID: String) -> URL {
+    public static func fileURL(for stationID: String) -> URL {
         let safeFileName = sanitizedFileName(for: stationID)
         return cacheDirectory().appendingPathComponent("\(safeFileName).png")
     }
 
-    func deleteImage(for stationID: String) {
+    public func deleteImage(for stationID: String) {
         let key = stationID as NSString
         #if os(iOS)
         cachedImages.removeValue(forKey: stationID)
@@ -178,7 +177,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
         try? FileManager.default.removeItem(at: url)
     }
     
-    func clearMemoryCache() {
+    public func clearMemoryCache() {
         Self.memoryCache.removeAllObjects()
         Self.memoryCacheKeySet.removeAll()
         #if os(iOS)
@@ -188,7 +187,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
         #endif
     }
     
-    func clearAllCachedImages() {
+    public func clearAllCachedImages() {
         let directory = Self.cacheDirectory()
         let fileManager = FileManager.default
         guard let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
@@ -198,7 +197,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
         }
     }
 
-    func allCachedStationIDs() -> [String] {
+    public func allCachedStationIDs() -> [String] {
         let directory = Self.cacheDirectory()
         guard let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return [] }
 
@@ -210,7 +209,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
     #if os(iOS)
     /// Gibt ein Platzhalter-Image zurück, falls kein FavIcon verfügbar ist (iOS).
     /// - Parameter canvas: Zielgröße (optional, Default: 200)
-    func placeholderImage(canvas: CGFloat = 200) -> UIImage {
+    public func placeholderImage(canvas: CGFloat = 200) -> UIImage {
         if let img = UIImage(named: "Placeholder") {
             return squareFit(image: img, canvas: canvas)
         }
@@ -220,7 +219,7 @@ final class RadioStationFavIconCacheManager: ObservableObject {
     #elseif os(macOS)
     /// Gibt ein Platzhalter-Image zurück, falls kein FavIcon verfügbar ist (macOS).
     /// - Parameter canvas: Zielgröße (optional, Default: 200)
-    func placeholderImage(canvas: CGFloat = 200) -> NSImage {
+    public func placeholderImage(canvas: CGFloat = 200) -> NSImage {
         if let img = NSImage(named: NSImage.Name("Placeholder")) {
             return squareFit(image: img, canvas: canvas)
         }

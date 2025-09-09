@@ -1,0 +1,224 @@
+//
+//  CTRKRadioStation.swift
+//  Pladio
+//
+//  Created by Patrick @ DIEZIs on 27.06.2025.
+//
+
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+import Foundation
+import CryptoKit
+import CTSwiftLogger
+
+public struct CTRKRadioStation: Codable, Identifiable, Equatable {
+    // Namespace for UUIDv5 generation. Generate once and keep constant for the app.
+    private static let idNamespace = UUID(uuidString: "9C5B1E63-6C9E-4C5B-A2B6-0E8B8D6D2EAF")!
+
+    /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
+    private static func canonicalStreamKey(from urlString: String) -> String {
+        guard var comp = URLComponents(string: urlString) else { return urlString }
+        comp.scheme = comp.scheme?.lowercased()
+        comp.host   = comp.host?.lowercased()
+        // Remove default ports
+        if (comp.scheme == "http"  && comp.port == 80)  { comp.port = nil }
+        if (comp.scheme == "https" && comp.port == 443) { comp.port = nil }
+        // We intentionally ignore query/fragment to avoid unstable IDs across CDNs
+        comp.query = nil
+        comp.fragment = nil
+        var path = comp.path
+        if path.hasSuffix("/") { path.removeLast() }
+        comp.path = path.isEmpty ? "/" : path
+        return comp.string ?? urlString
+    }
+
+    /// Minimal UUIDv5 (SHA-1, name-based) implementation per RFC 4122.
+    private static func uuidV5(namespace: UUID, name: Data) -> UUID {
+        var ns = namespace.uuid
+        var bytes = withUnsafeBytes(of: &ns) { Data($0) }
+        bytes.append(name)
+        let hash = Insecure.SHA1.hash(data: bytes)
+        var result = Data(hash.prefix(16))
+        // Set RFC 4122 variant
+        result[8] = (result[8] & 0x3F) | 0x80
+        // Set version to 5
+        result[6] = (result[6] & 0x0F) | 0x50
+        let uuid = result.withUnsafeBytes { ptr -> uuid_t in
+            let b = ptr.bindMemory(to: UInt8.self)
+            return (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15])
+        }
+        return UUID(uuid: uuid)
+    }
+    public static func == (lhs: CTRKRadioStation, rhs: CTRKRadioStation) -> Bool {
+        return lhs.id == rhs.id
+    }
+    public var id: String {
+        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL)
+        let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
+        return uuid.uuidString.lowercased()
+    }
+    public let name: String
+    public let streamURL: String
+    public let homepageURL: String
+    public let faviconURL: String
+    public let tags: [String]
+    public let codec: String
+    public let bitrate: Int
+    public let country: String
+    public var supportsMetadata: Bool? = nil
+    public var lastPlayedDate: Date?
+    public var health: CTRKRadioStationHealth
+
+    #if os(iOS)
+    public var faviconImage: UIImage?
+    #elseif os(macOS)
+    public var faviconImage: NSImage?
+    #endif
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case streamURL = "url"
+        case homepageURL = "homepage"
+        case faviconURL = "favicon"
+        case tags
+        case codec
+        case bitrate
+        case country
+        case supportsMetadata
+        case lastPlayedDate
+        case health
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.streamURL = try container.decode(String.self, forKey: .streamURL)
+        self.homepageURL = try container.decodeIfPresent(String.self, forKey: .homepageURL) ?? ""
+        self.faviconURL = try container.decodeIfPresent(String.self, forKey: .faviconURL) ?? ""
+        let tagsString = try container.decodeIfPresent(String.self, forKey: .tags) ?? ""
+        self.tags = tagsString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        self.codec = try container.decodeIfPresent(String.self, forKey: .codec) ?? ""
+        self.bitrate = try container.decodeIfPresent(Int.self, forKey: .bitrate) ?? 0
+        self.country = try container.decodeIfPresent(String.self, forKey: .country) ?? ""
+        self.supportsMetadata = try container.decodeIfPresent(Bool.self, forKey: .supportsMetadata)
+        self.lastPlayedDate = try container.decodeIfPresent(Date.self, forKey: .lastPlayedDate)
+        self.health = try container.decodeIfPresent(CTRKRadioStationHealth.self, forKey: .health) ?? CTRKRadioStationHealth()
+        #if os(iOS)
+        self.faviconImage = nil
+        #elseif os(macOS)
+        self.faviconImage = nil
+        #endif
+    }
+    
+    public init(
+        name: String,
+        streamURL: String,
+        homepageURL: String,
+        faviconURL: String,
+        tags: [String],
+        codec: String,
+        bitrate: Int,
+        country: String,
+        supportsMetadata: Bool? = nil,
+        lastPlayedDate: Date? = nil,
+        faviconImage: /* UIImage? | NSImage? */ Any? = nil, // oder per #if auflösen
+        health: CTRKRadioStationHealth = .init()
+    ) {
+        self.name = name
+        self.streamURL = streamURL
+        self.homepageURL = homepageURL
+        self.faviconURL = faviconURL
+        self.tags = tags
+        self.codec = codec
+        self.bitrate = bitrate
+        self.country = country
+        self.supportsMetadata = supportsMetadata
+        self.lastPlayedDate = lastPlayedDate
+        self.health = health
+        #if os(iOS)
+        self.faviconImage = faviconImage as? UIImage
+        #elseif os(macOS)
+        self.faviconImage = faviconImage as? NSImage
+        #endif
+    }
+    
+    #if os(iOS)
+    func squareFavicon(canvas: CGFloat) -> UIImage? {
+        guard let image = faviconImage else { return nil }
+        return CTRKRadioStation.squareFit(image: image, canvas: canvas)
+    }
+
+    func downscaledFavicon(maxDimension: CGFloat) -> UIImage? {
+        guard let image = faviconImage else { return nil }
+        return CTRKRadioStation.downscale(image: image, maxDimension: maxDimension)
+    }
+
+    private static func squareFit(image: UIImage, canvas: CGFloat) -> UIImage {
+        let size = CGSize(width: canvas, height: canvas)
+        UIGraphicsBeginImageContextWithOptions(size, false, 0.0)
+        let origin = CGPoint(
+            x: (canvas - image.size.width) / 2,
+            y: (canvas - image.size.height) / 2
+        )
+        image.draw(in: CGRect(origin: origin, size: image.size))
+        let newImage = UIGraphicsGetImageFromCurrentImageContext() ?? image
+        UIGraphicsEndImageContext()
+        return newImage
+    }
+
+    private static func downscale(image: UIImage, maxDimension: CGFloat) -> UIImage? {
+        let aspectRatio = image.size.width / image.size.height
+        var targetSize = CGSize(width: maxDimension, height: maxDimension)
+
+        if aspectRatio > 1 {
+            targetSize.height = maxDimension / aspectRatio
+        } else {
+            targetSize.width = maxDimension * aspectRatio
+        }
+
+        UIGraphicsBeginImageContextWithOptions(targetSize, false, 0.0)
+        image.draw(in: CGRect(origin: .zero, size: targetSize))
+        let newImage = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return newImage
+    }
+    #endif
+    
+    private struct ManualWrapper: Codable {
+        var isManual: Bool
+    }
+
+    public var isManual: Bool {
+        get {
+            guard let base64 = self.tags.first,
+                  let data = Data(base64Encoded: base64),
+                  let wrapper = try? JSONDecoder().decode(ManualWrapper.self, from: data)
+            else { return false }
+            return wrapper.isManual
+        }
+        set {
+            let wrapper = ManualWrapper(isManual: newValue)
+            if let data = try? JSONEncoder().encode(wrapper) {
+                let base64 = data.base64EncodedString()
+                self = CTRKRadioStation(
+                    name: self.name,
+                    streamURL: self.streamURL,
+                    homepageURL: self.homepageURL,
+                    faviconURL: self.faviconURL,
+                    tags: [base64],
+                    codec: self.codec,
+                    bitrate: self.bitrate,
+                    country: self.country,
+                    supportsMetadata: self.supportsMetadata,
+                    lastPlayedDate: self.lastPlayedDate,
+                    faviconImage: self.faviconImage,
+                    health: self.health
+                )
+            }
+        }
+    }
+}
+

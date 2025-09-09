@@ -2,44 +2,16 @@ import Combine
 import CTSwiftLogger
 import Foundation
 
-extension RadioStation {
-    var isManual: Bool {
-        get { return (try? JSONDecoder().decode(ManualWrapper.self, from: Data(base64Encoded: self.tags) ?? Data()))?.isManual ?? false }
-        set {
-            if newValue {
-                let wrapper = ManualWrapper(isManual: true)
-                if let data = try? JSONEncoder().encode(wrapper) {
-                    let base64 = data.base64EncodedString()
-                    self = RadioStation(
-                        name: self.name,
-                        urlResolved: self.urlResolved,
-                        favicon: self.favicon,
-                        tags: base64,
-                        codec: self.codec,
-                        bitrate: self.bitrate,
-                        country: self.country
-                    )
-                }
-            }
-        }
-    }
-}
-
-private struct ManualWrapper: Codable {
-    let isManual: Bool
-}
-
-@MainActor
-final class FavoriteRadioStationsManager: ObservableObject {
+@MainActor public final class CTRKFavoriteRadioStationsManager: ObservableObject {
     private let key = "favoriteRadioStations"
     private let iCloudStore = NSUbiquitousKeyValueStore.default
 
-    @Published private(set) var favorites: [RadioStation] = []
+    @Published public private(set) var favorites: [CTRKRadioStation] = []
     /// Lightweight, reactive lookup for favorite status (fast Set instead of scanning the array)
-    @Published private(set) var favoriteIDs: Set<String> = []
+    @Published public private(set) var favoriteIDs: Set<String> = []
     private var cancellables = Set<AnyCancellable>()
 
-    init() {
+    public init() {
         loadFavorites()
         favoriteIDs = Set(favorites.map { $0.id })
 
@@ -52,14 +24,14 @@ final class FavoriteRadioStationsManager: ObservableObject {
 
         iCloudStore.synchronize()
 
-        RadioStationFavIconCacheManager.shared.$cachedImages
+        CTRKRadioStationFavIconCacheManager.shared.$cachedImages
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 // Update only entries that don't yet have an in-memory image
                 for i in self.favorites.indices {
                     if self.favorites[i].faviconImage == nil,
-                       let img = RadioStationFavIconCacheManager.shared.imageInMemory(for: self.favorites[i].id) {
+                       let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: self.favorites[i].id) {
                         self.favorites[i].faviconImage = img
                     }
                 }
@@ -67,12 +39,12 @@ final class FavoriteRadioStationsManager: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func isFavorite(_ station: RadioStation) -> Bool {
+    public func isFavorite(_ station: CTRKRadioStation) -> Bool {
         favorites.contains(where: { $0.id == station.id })
     }
-    func isFavoriteID(_ id: String) -> Bool { favoriteIDs.contains(id) }
+    public func isFavoriteID(_ id: String) -> Bool { favoriteIDs.contains(id) }
 
-    func toggleFavorite(_ station: RadioStation) {
+    public func toggleFavorite(_ station: CTRKRadioStation) {
         objectWillChange.send() // zusätzliche Sicherheit, dass Views sofort refreshen
         if let index = favorites.firstIndex(where: { $0.id == station.id }) {
             favorites.remove(at: index)
@@ -81,10 +53,10 @@ final class FavoriteRadioStationsManager: ObservableObject {
             favorites.append(station)
             favoriteIDs.insert(station.id)
             // set in-memory icon immediately if available & prewarm async
-            if let img = RadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) {
+            if let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) {
                 favorites[favorites.endIndex - 1].faviconImage = img
             }
-            RadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+            CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
         }
         saveFavorites()
         
@@ -104,11 +76,12 @@ final class FavoriteRadioStationsManager: ObservableObject {
         favoriteIDs = Set(favoriteIDs)
     }
 
-    func addManualFavorite(name: String, url: String, favicon: String, tags: String, codec: String = "MP3", bitrate: Int = 128, country: String = "Custom") {
-        var station = RadioStation(
+    public func addManualFavorite(name: String, streamURL: String, homepageURL: String, faviconURL: String, tags: [String], codec: String = "MP3", bitrate: Int = 128, country: String = "Custom") {
+        var station = CTRKRadioStation(
             name: name,
-            urlResolved: url,
-            favicon: favicon,
+            streamURL: streamURL,
+            homepageURL: homepageURL,
+            faviconURL: faviconURL,
             tags: tags,
             codec: codec,
             bitrate: bitrate,
@@ -117,15 +90,15 @@ final class FavoriteRadioStationsManager: ObservableObject {
         station.isManual = true
         favorites.append(station)
         favoriteIDs.insert(station.id)
-        if let img = RadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) {
+        if let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) {
             favorites[favorites.endIndex - 1].faviconImage = img
         }
-        RadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+        CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
         saveFavorites()
         favoriteIDs = Set(favoriteIDs)
     }
 
-    func removeManualFavorite(_ station: RadioStation) {
+    public func removeManualFavorite(_ station: CTRKRadioStation) {
         let oldCount = favorites.count
         favorites.removeAll { $0.id == station.id && $0.isManual }
         favoriteIDs.remove(station.id)
@@ -142,14 +115,14 @@ final class FavoriteRadioStationsManager: ObservableObject {
             return
         }
         do {
-            let decoded = try JSONDecoder().decode([RadioStation].self, from: data)
+            let decoded = try JSONDecoder().decode([CTRKRadioStation].self, from: data)
             favorites = decoded
             favoriteIDs = Set(decoded.map { $0.id })
             for (idx, station) in favorites.enumerated() {
                 let stationID = station.id
                 Task { @MainActor in
-                    favorites[idx].faviconImage = RadioStationFavIconCacheManager.shared.imageInMemory(for: stationID)
-                    RadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
+                    favorites[idx].faviconImage = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: stationID)
+                    CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
                 }
             }
 #if DEBUG
@@ -167,9 +140,9 @@ final class FavoriteRadioStationsManager: ObservableObject {
         for station in favorites {
             if let image = station.faviconImage {
                 // Only persist if not already present in the in-memory cache to avoid redundant publishes
-                if RadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) == nil {
+                if CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) == nil {
                     Task { @MainActor in
-                        RadioStationFavIconCacheManager.shared.saveImage(image, for: station.id)
+                        CTRKRadioStationFavIconCacheManager.shared.saveImage(image, for: station.id)
                     }
                 }
             }
@@ -195,7 +168,7 @@ final class FavoriteRadioStationsManager: ObservableObject {
         loadFavorites()
     }
     
-    func previousFavorite(currentStation: RadioStation) -> RadioStation? {
+    public func previousFavorite(currentStation: CTRKRadioStation) -> CTRKRadioStation? {
         guard !favorites.isEmpty else { return nil }
         guard let currentIndex = favorites.firstIndex(of: currentStation) else {
             return favorites.last
@@ -205,7 +178,7 @@ final class FavoriteRadioStationsManager: ObservableObject {
         return favorites[prevIndex]
     }
 
-    func nextFavorite(currentStation: RadioStation) -> RadioStation? {
+    public func nextFavorite(currentStation: CTRKRadioStation) -> CTRKRadioStation? {
         guard !favorites.isEmpty else { return nil }
         guard let currentIndex = favorites.firstIndex(of: currentStation) else {
             return favorites.first
@@ -221,5 +194,5 @@ final class FavoriteRadioStationsManager: ObservableObject {
 }
 
 extension Notification.Name {
-    static let favoriteDidChange = Notification.Name("favoriteDidChange")
+    public static let favoriteDidChange = Notification.Name("favoriteDidChange")
 }
