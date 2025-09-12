@@ -76,7 +76,7 @@ import Foundation
         favoriteIDs = Set(favoriteIDs)
     }
 
-    public func addManualFavorite(name: String, streamURL: String, homepageURL: String, faviconURL: String, tags: [String], codec: String = "MP3", bitrate: Int = 128, country: String = "Custom") {
+    public func addManualFavorite(name: String, streamURL: String, homepageURL: String, faviconURL: String, tags: [String], codec: String = "MP3", bitrate: Int = 128, country: String = "Custom", labels: [String]) {
         var station = CTRKRadioStation(
             name: name,
             streamURL: streamURL,
@@ -85,7 +85,8 @@ import Foundation
             tags: tags,
             codec: codec,
             bitrate: bitrate,
-            country: country
+            country: country,
+            labels: labels
         )
         station.isManual = true
         favorites.append(station)

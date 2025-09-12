@@ -17,7 +17,7 @@ import CTSwiftLogger
 public struct CTRKRadioStation: Codable, Identifiable, Equatable {
     // Namespace for UUIDv5 generation. Generate once and keep constant for the app.
     private static let idNamespace = UUID(uuidString: "9C5B1E63-6C9E-4C5B-A2B6-0E8B8D6D2EAF")!
-
+	
     /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
     private static func canonicalStreamKey(from urlString: String) -> String {
         guard var comp = URLComponents(string: urlString) else { return urlString }
@@ -71,6 +71,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
     public var supportsMetadata: Bool? = nil
     public var lastPlayedDate: Date?
     public var health: CTRKRadioStationHealth
+    public let labels: [String]
 
     #if os(iOS)
     public var faviconImage: UIImage?
@@ -90,6 +91,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         case supportsMetadata
         case lastPlayedDate
         case health
+        case labels
     }
     
     public init(from decoder: Decoder) throws {
@@ -106,6 +108,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         self.supportsMetadata = try container.decodeIfPresent(Bool.self, forKey: .supportsMetadata)
         self.lastPlayedDate = try container.decodeIfPresent(Date.self, forKey: .lastPlayedDate)
         self.health = try container.decodeIfPresent(CTRKRadioStationHealth.self, forKey: .health) ?? CTRKRadioStationHealth()
+        let labelsString = try container.decodeIfPresent(String.self, forKey: .labels) ?? ""
+        self.labels = labelsString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         #if os(iOS)
         self.faviconImage = nil
         #elseif os(macOS)
@@ -125,13 +129,15 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         supportsMetadata: Bool? = nil,
         lastPlayedDate: Date? = nil,
         faviconImage: /* UIImage? | NSImage? */ Any? = nil, // oder per #if auflösen
-        health: CTRKRadioStationHealth = .init()
+        health: CTRKRadioStationHealth = .init(),
+        labels: [String]
     ) {
         self.name = name
         self.streamURL = streamURL
         self.homepageURL = homepageURL
         self.faviconURL = faviconURL
         self.tags = tags
+        self.labels = labels
         self.codec = codec
         self.bitrate = bitrate
         self.country = country
@@ -215,7 +221,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
                     supportsMetadata: self.supportsMetadata,
                     lastPlayedDate: self.lastPlayedDate,
                     faviconImage: self.faviconImage,
-                    health: self.health
+                    health: self.health,
+                    labels: [base64]
                 )
             }
         }
