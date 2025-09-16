@@ -1,3 +1,6 @@
+#if os(macOS)
+import AppKit
+#endif
 import Combine
 import CTSwiftLogger
 import Foundation
@@ -32,7 +35,11 @@ import Foundation
                 for i in self.favorites.indices {
                     if self.favorites[i].faviconImage == nil,
                        let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: self.favorites[i].id) {
-                        self.favorites[i].faviconImage = img
+                        if let tiff = img.tiffRepresentation,
+                           let bitmap = NSBitmapImageRep(data: tiff),
+                           let png = bitmap.representation(using: .png, properties: [:]) {
+                            self.favorites[i].faviconImage = png
+                        }
                     }
                 }
             }
@@ -54,7 +61,11 @@ import Foundation
             favoriteIDs.insert(station.id)
             // set in-memory icon immediately if available & prewarm async
             if let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) {
-                favorites[favorites.endIndex - 1].faviconImage = img
+                if let tiff = img.tiffRepresentation,
+                   let bitmap = NSBitmapImageRep(data: tiff),
+                   let png = bitmap.representation(using: .png, properties: [:]) {
+                    favorites[favorites.endIndex - 1].faviconImage = png
+                }
             }
             CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
         }
@@ -92,7 +103,11 @@ import Foundation
         favorites.append(station)
         favoriteIDs.insert(station.id)
         if let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) {
-            favorites[favorites.endIndex - 1].faviconImage = img
+            if let tiff = img.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiff),
+               let png = bitmap.representation(using: .png, properties: [:]) {
+                favorites[favorites.endIndex - 1].faviconImage = png
+            }
         }
         CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
         saveFavorites()
@@ -122,7 +137,12 @@ import Foundation
             for (idx, station) in favorites.enumerated() {
                 let stationID = station.id
                 Task { @MainActor in
-                    favorites[idx].faviconImage = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: stationID)
+                    if let image = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: stationID),
+                       let tiff = image.tiffRepresentation,
+                       let bitmap = NSBitmapImageRep(data: tiff),
+                       let png = bitmap.representation(using: .png, properties: [:]) {
+                        favorites[idx].faviconImage = png
+                    }
                     CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
                 }
             }
@@ -143,7 +163,9 @@ import Foundation
                 // Only persist if not already present in the in-memory cache to avoid redundant publishes
                 if CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) == nil {
                     Task { @MainActor in
-                        CTRKRadioStationFavIconCacheManager.shared.saveImage(image, for: station.id)
+                        if let nsImage = NSImage(data: image) {
+                            CTRKRadioStationFavIconCacheManager.shared.saveImage(nsImage, for: station.id)
+                        }
                     }
                 }
             }

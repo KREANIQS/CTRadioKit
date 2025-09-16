@@ -17,7 +17,7 @@ import CTSwiftLogger
 public struct CTRKRadioStation: Codable, Identifiable, Equatable {
     // Namespace for UUIDv5 generation. Generate once and keep constant for the app.
     private static let idNamespace = UUID(uuidString: "9C5B1E63-6C9E-4C5B-A2B6-0E8B8D6D2EAF")!
-	
+    
     /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
     private static func canonicalStreamKey(from urlString: String) -> String {
         guard var comp = URLComponents(string: urlString) else { return urlString }
@@ -60,36 +60,33 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
         return uuid.uuidString.lowercased()
     }
-    public let name: String
-    public let streamURL: String
-    public let homepageURL: String
-    public let faviconURL: String
-    public let tags: [String]
-    public let codec: String
-    public let bitrate: Int
-    public let country: String
+    public var name: String
+    public var streamURL: String
+    public var homepageURL: String
+    public var faviconURL: String
+    public var tags: [String]
+    public var codec: String
+    public var bitrate: Int
+    public var country: String
     public var supportsMetadata: Bool? = nil
     public var lastPlayedDate: Date?
     public var health: CTRKRadioStationHealth
-    public let labels: [String]
+    public var labels: [String]
 
-    #if os(iOS)
-    public var faviconImage: UIImage?
-    #elseif os(macOS)
-    public var faviconImage: NSImage?
-    #endif
-
+    public var faviconImage: Data?
+    
     enum CodingKeys: String, CodingKey {
         case name
-        case streamURL = "url"
-        case homepageURL = "homepage"
-        case faviconURL = "favicon"
+        case streamURL
+        case homepageURL
+        case faviconURL
         case tags
         case codec
         case bitrate
         case country
         case supportsMetadata
         case lastPlayedDate
+        case faviconImage
         case health
         case labels
     }
@@ -100,21 +97,36 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         self.streamURL = try container.decode(String.self, forKey: .streamURL)
         self.homepageURL = try container.decodeIfPresent(String.self, forKey: .homepageURL) ?? ""
         self.faviconURL = try container.decodeIfPresent(String.self, forKey: .faviconURL) ?? ""
-        let tagsString = try container.decodeIfPresent(String.self, forKey: .tags) ?? ""
-        self.tags = tagsString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         self.codec = try container.decodeIfPresent(String.self, forKey: .codec) ?? ""
         self.bitrate = try container.decodeIfPresent(Int.self, forKey: .bitrate) ?? 0
         self.country = try container.decodeIfPresent(String.self, forKey: .country) ?? ""
         self.supportsMetadata = try container.decodeIfPresent(Bool.self, forKey: .supportsMetadata)
         self.lastPlayedDate = try container.decodeIfPresent(Date.self, forKey: .lastPlayedDate)
         self.health = try container.decodeIfPresent(CTRKRadioStationHealth.self, forKey: .health) ?? CTRKRadioStationHealth()
-        let labelsString = try container.decodeIfPresent(String.self, forKey: .labels) ?? ""
-        self.labels = labelsString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        self.labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
         #if os(iOS)
         self.faviconImage = nil
         #elseif os(macOS)
         self.faviconImage = nil
         #endif
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(streamURL, forKey: .streamURL)
+        try container.encode(homepageURL, forKey: .homepageURL)
+        try container.encode(faviconURL, forKey: .faviconURL)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(codec, forKey: .codec)
+        try container.encode(bitrate, forKey: .bitrate)
+        try container.encode(country, forKey: .country)
+        try container.encodeIfPresent(supportsMetadata, forKey: .supportsMetadata)
+        try container.encodeIfPresent(lastPlayedDate, forKey: .lastPlayedDate)
+        try container.encodeIfPresent(faviconImage, forKey: .faviconImage)
+        try container.encode(health, forKey: .health)
+        try container.encode(labels, forKey: .labels)
     }
     
     public init(
@@ -145,9 +157,20 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         self.lastPlayedDate = lastPlayedDate
         self.health = health
         #if os(iOS)
-        self.faviconImage = faviconImage as? UIImage
+        if let image = faviconImage as? UIImage {
+            self.faviconImage = image.pngData()
+        } else {
+            self.faviconImage = nil
+        }
         #elseif os(macOS)
-        self.faviconImage = faviconImage as? NSImage
+        if let image = faviconImage as? NSImage,
+           let tiff = image.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiff),
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            self.faviconImage = png
+        } else {
+            self.faviconImage = nil
+        }
         #endif
     }
     
@@ -228,4 +251,3 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         }
     }
 }
-
