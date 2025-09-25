@@ -72,6 +72,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
     public var lastPlayedDate: Date?
     public var health: CTRKRadioStationHealth
     public var labels: [String]
+    public var curated: Bool
+    public var qualityCheck: CTRKQualityCheckStatus
 
     public var faviconImage: Data?
     
@@ -89,6 +91,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         case faviconImage
         case health
         case labels
+        case curated
+        case qualityCheck
     }
     
     public init(from decoder: Decoder) throws {
@@ -105,6 +109,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         self.lastPlayedDate = try container.decodeIfPresent(Date.self, forKey: .lastPlayedDate)
         self.health = try container.decodeIfPresent(CTRKRadioStationHealth.self, forKey: .health) ?? CTRKRadioStationHealth()
         self.labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
+        self.curated = try container.decodeIfPresent(Bool.self, forKey: .curated) ?? false
+        self.qualityCheck = try container.decodeIfPresent(CTRKQualityCheckStatus.self, forKey: .qualityCheck) ?? .open
         #if os(iOS)
         self.faviconImage = nil
         #elseif os(macOS)
@@ -127,6 +133,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(faviconImage, forKey: .faviconImage)
         try container.encode(health, forKey: .health)
         try container.encode(labels, forKey: .labels)
+        try container.encode(curated, forKey: .curated)
+        try container.encode(qualityCheck, forKey: .qualityCheck)
     }
     
     public init(
@@ -142,7 +150,9 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         lastPlayedDate: Date? = nil,
         faviconImage: /* UIImage? | NSImage? */ Any? = nil, // oder per #if auflösen
         health: CTRKRadioStationHealth = .init(),
-        labels: [String]
+        labels: [String],
+        curated: Bool = false,
+        qualityCheck: CTRKQualityCheckStatus = .open
     ) {
         self.name = name
         self.streamURL = streamURL
@@ -156,6 +166,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         self.supportsMetadata = supportsMetadata
         self.lastPlayedDate = lastPlayedDate
         self.health = health
+        self.curated = curated
+        self.qualityCheck = qualityCheck
         #if os(iOS)
         if let image = faviconImage as? UIImage {
             self.faviconImage = image.pngData()
@@ -245,7 +257,9 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
                     lastPlayedDate: self.lastPlayedDate,
                     faviconImage: self.faviconImage,
                     health: self.health,
-                    labels: [base64]
+                    labels: [base64],
+                    curated: self.curated,
+                    qualityCheck: self.qualityCheck
                 )
             }
         }
