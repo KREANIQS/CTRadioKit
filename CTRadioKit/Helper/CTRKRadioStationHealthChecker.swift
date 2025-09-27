@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import CoreGraphics
+import ImageIO
 
 public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
     public static let shared = CTRKRadioStationHealthChecker()
@@ -38,6 +40,7 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
 
             var updatedStation = station
             await checkStreamHealth(for: &updatedStation)
+            await checkFaviconHealth(for: &updatedStation)
 
             // Call update callback for real-time UI updates, even if partially completed
             onStationUpdated(updatedStation)
@@ -60,7 +63,7 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
 
         // Test HTTP version
         if let httpURL = convertToHTTP(streamURL) {
-            station.health.streamHTTP = await testURL(httpURL)
+            station.health.streamHTTP = await testStreamURL(httpURL)
         } else {
             // If URL conversion fails, mark as invalid
             station.health.streamHTTP = .invalid
@@ -73,14 +76,14 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
 
         // Test HTTPS version
         if let httpsURL = convertToHTTPS(streamURL) {
-            station.health.streamHTTPS = await testURL(httpsURL)
+            station.health.streamHTTPS = await testStreamURL(httpsURL)
         } else {
             // If URL conversion fails, mark as invalid
             station.health.streamHTTPS = .invalid
         }
     }
 
-    private func testURL(_ urlString: String) async -> CTRKRadioStationHealthStatus {
+    private func testStreamURL(_ urlString: String) async -> CTRKRadioStationStreamHealthStatus {
         guard let url = URL(string: urlString) else {
             return .invalid
         }
@@ -154,6 +157,83 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
         // If no clear indicators, assume it might be a stream
         // (Some servers don't set proper headers)
         return true
+    }
+
+    private func checkFaviconHealth(for station: inout CTRKRadioStation) async {
+        let faviconURL = station.faviconURL
+
+        // Test HTTP version
+        if let httpURL = convertToHTTP(faviconURL) {
+            station.health.faviconHTTP = await testFaviconURL(httpURL)
+        } else {
+            // If URL conversion fails, mark as failed
+            station.health.faviconHTTP = .failed
+        }
+
+        // Check if task was cancelled before testing HTTPS
+        if Task.isCancelled {
+            return
+        }
+
+        // Test HTTPS version
+        if let httpsURL = convertToHTTPS(faviconURL) {
+            station.health.faviconHTTPS = await testFaviconURL(httpsURL)
+        } else {
+            // If URL conversion fails, mark as failed
+            station.health.faviconHTTPS = .failed
+        }
+    }
+
+    private func testFaviconURL(_ urlString: String) async -> CTRKRadioStationFaviconHealthStatus {
+        guard let url = URL(string: urlString) else {
+            return .failed
+        }
+
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("PladioManager/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("image/*", forHTTPHeaderField: "Accept")
+
+            let (data, response) = try await urlSession.data(for: request)
+
+            if let httpResponse = response as? HTTPURLResponse {
+                // Check HTTP status code
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    return .failed
+                }
+
+                // Check if it's actually an image and get dimensions
+                return await getFaviconQuality(from: data)
+            }
+
+            return .failed
+        } catch {
+            return .failed
+        }
+    }
+
+    private func getFaviconQuality(from data: Data) async -> CTRKRadioStationFaviconHealthStatus {
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil),
+              let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [String: Any],
+              let width = imageProperties[kCGImagePropertyPixelWidth as String] as? Int,
+              let height = imageProperties[kCGImagePropertyPixelHeight as String] as? Int else {
+            return .failed
+        }
+
+        // Use the smaller dimension to categorize the favicon quality
+        let minDimension = min(width, height)
+
+        switch minDimension {
+        case 0..<200:
+            return .low
+        case 200..<400:
+            return .medium
+        case 400...:
+            return .big
+        default:
+            return .failed
+        }
     }
 
     private func convertToHTTP(_ url: String) -> String? {
