@@ -16,6 +16,9 @@ import AppKit
     public static let shared = CTRKRadioStationFavIconCacheManager()
     public init() {}
 
+    // Custom cache directory support (for database-relative caching)
+    private static var customCacheDirectory: URL?
+
     #if os(iOS)
     @Published public private(set) var cachedImages: [String: UIImage] = [:]
 
@@ -148,7 +151,32 @@ import AppKit
     }
     
     public static func cacheDirectory() -> URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        if let customDir = customCacheDirectory {
+            return customDir
+        }
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    }
+
+    /// Sets a custom cache directory (e.g., next to a database file)
+    /// - Parameter url: The directory URL where favicon cache should be stored
+    public static func setCacheDirectory(_ url: URL) {
+        customCacheDirectory = url
+        // Create directory if it doesn't exist
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+        } catch {
+            print("❌ Failed to create favicon cache directory: \(error.localizedDescription)")
+        }
+    }
+
+    /// Resets to using the system cache directory
+    public static func resetToSystemCacheDirectory() {
+        customCacheDirectory = nil
+    }
+
+    /// Returns the currently active cache directory path (for debugging/UI)
+    public static func currentCacheDirectoryPath() -> String {
+        cacheDirectory().path
     }
 
     public static func sanitizedFileName(for stationID: String) -> String {
