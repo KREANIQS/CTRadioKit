@@ -6,7 +6,7 @@
 //
 
 
-public enum CTRKRadioStationStreamHealthStatus: String, Codable, CaseIterable, Identifiable {
+public enum CTRKRadioStationStreamHealthStatus: String, Codable, CaseIterable, Identifiable, Sendable {
     case unknown, valid, invalid
     public var id: String { rawValue }
 }

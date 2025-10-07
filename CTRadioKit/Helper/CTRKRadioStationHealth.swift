@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct CTRKRadioStationHealth: Codable, Hashable {
+public struct CTRKRadioStationHealth: Codable, Hashable, Sendable {
     public var streamHTTP: CTRKRadioStationStreamHealthStatus
     public var streamHTTPS: CTRKRadioStationStreamHealthStatus
     public var faviconHTTP: CTRKRadioStationFaviconHealthStatus

@@ -14,9 +14,12 @@ import Foundation
 import CryptoKit
 import CTSwiftLogger
 
-public struct CTRKRadioStation: Codable, Identifiable, Equatable {
+public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     // Namespace for UUIDv5 generation. Generate once and keep constant for the app.
     private static let idNamespace = UUID(uuidString: "9C5B1E63-6C9E-4C5B-A2B6-0E8B8D6D2EAF")!
+
+    // Internal storage for unique ID (for new stations without streamURL)
+    private var _uniqueID: String?
     
     /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
     private static func canonicalStreamKey(from urlString: String) -> String {
@@ -56,6 +59,14 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         return lhs.id == rhs.id
     }
     public var id: String {
+        // If streamURL is empty or whitespace-only, use stored unique ID or generate new one
+        let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedURL.isEmpty {
+            // Return stored unique ID or generate a new UUID
+            return _uniqueID ?? UUID().uuidString.lowercased()
+        }
+
+        // Normal case: derive ID from streamURL
         let key = CTRKRadioStation.canonicalStreamKey(from: streamURL)
         let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
         return uuid.uuidString.lowercased()
@@ -78,6 +89,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
     public var faviconImage: Data?
     
     enum CodingKeys: String, CodingKey {
+        case _uniqueID
         case name
         case streamURL
         case homepageURL
@@ -97,6 +109,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
     
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        self._uniqueID = try container.decodeIfPresent(String.self, forKey: ._uniqueID)
         self.name = try container.decode(String.self, forKey: .name)
         self.streamURL = try container.decode(String.self, forKey: .streamURL)
         self.homepageURL = try container.decodeIfPresent(String.self, forKey: .homepageURL) ?? ""
@@ -120,6 +133,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
     
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(_uniqueID, forKey: ._uniqueID)
         try container.encode(name, forKey: .name)
         try container.encode(streamURL, forKey: .streamURL)
         try container.encode(homepageURL, forKey: .homepageURL)
@@ -154,6 +168,10 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable {
         curated: Bool = false,
         qualityCheck: CTRKQualityCheckStatus = .open
     ) {
+        // Generate unique ID if streamURL is empty
+        let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        self._uniqueID = trimmedURL.isEmpty ? UUID().uuidString.lowercased() : nil
+
         self.name = name
         self.streamURL = streamURL
         self.homepageURL = homepageURL

@@ -19,6 +19,12 @@ import AppKit
     // Custom cache directory support (for database-relative caching)
     private static var customCacheDirectory: URL?
 
+    #if os(macOS)
+    // Security-scoped bookmark for custom cache directory (macOS only)
+    private static var cacheDirectoryBookmark: Data?
+    private static var isAccessingSecurityScopedResource = false
+    #endif
+
     #if os(iOS)
     @Published public private(set) var cachedImages: [String: UIImage] = [:]
 
@@ -159,8 +165,23 @@ import AppKit
 
     /// Sets a custom cache directory (e.g., next to a database file)
     /// - Parameter url: The directory URL where favicon cache should be stored
-    public static func setCacheDirectory(_ url: URL) {
+    /// - Parameter bookmark: Optional security-scoped bookmark for macOS
+    public static func setCacheDirectory(_ url: URL, bookmark: Data? = nil) {
+        #if os(macOS)
+        // Stop accessing previous security-scoped resource
+        stopAccessingCacheDirectory()
+
         customCacheDirectory = url
+        cacheDirectoryBookmark = bookmark
+
+        // Start accessing new security-scoped resource if bookmark provided
+        if let bookmark = bookmark {
+            startAccessingCacheDirectory(bookmark: bookmark)
+        }
+        #else
+        customCacheDirectory = url
+        #endif
+
         // Create directory if it doesn't exist
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
@@ -171,8 +192,63 @@ import AppKit
 
     /// Resets to using the system cache directory
     public static func resetToSystemCacheDirectory() {
+        #if os(macOS)
+        stopAccessingCacheDirectory()
+        cacheDirectoryBookmark = nil
+        #endif
         customCacheDirectory = nil
     }
+
+    #if os(macOS)
+    /// Start accessing security-scoped resource (macOS only)
+    private static func startAccessingCacheDirectory(bookmark: Data) {
+        guard !isAccessingSecurityScopedResource else { return }
+
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+
+            if isStale {
+                print("⚠️ Cache directory bookmark is stale")
+                return
+            }
+
+            if url.startAccessingSecurityScopedResource() {
+                isAccessingSecurityScopedResource = true
+            } else {
+                print("❌ Failed to start accessing security-scoped cache directory")
+            }
+        } catch {
+            print("❌ Error resolving cache bookmark: \(error.localizedDescription)")
+        }
+    }
+
+    /// Stop accessing security-scoped resource (macOS only)
+    private static func stopAccessingCacheDirectory() {
+        guard isAccessingSecurityScopedResource else { return }
+        guard let bookmark = cacheDirectoryBookmark else { return }
+
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            url.stopAccessingSecurityScopedResource()
+            isAccessingSecurityScopedResource = false
+            print("✅ Stopped accessing security-scoped cache directory")
+        } catch {
+            print("❌ Error resolving cache bookmark for stop: \(error.localizedDescription)")
+        }
+    }
+    #endif
 
     /// Returns the currently active cache directory path (for debugging/UI)
     public static func currentCacheDirectoryPath() -> String {

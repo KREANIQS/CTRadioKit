@@ -7,6 +7,9 @@
 
 import Foundation
 import Combine
+#if os(macOS)
+import AppKit
+#endif
 
 /// Zentrale Verwaltung aller bekannten Radiostationen
 /// Einschliesslich Favoriten, Recents und Favicon Cache
@@ -17,7 +20,11 @@ public final class CTRKRadioStationManager: ObservableObject {
     public static let shared = CTRKRadioStationManager()
 
     // MARK: - Radiostationen
-    @Published public private(set) var allStations: [CTRKRadioStation] = []
+    @Published public var allStations: [CTRKRadioStation] = [] {
+        didSet {
+            indexStations(allStations)
+        }
+    }
 
     private var stationByID: [String: CTRKRadioStation] = [:]
     private var stationByCountry: [String: [CTRKRadioStation]] = [:]
@@ -59,7 +66,17 @@ public final class CTRKRadioStationManager: ObservableObject {
 
     /// Schreibt Radiostationen als JSON-Datei
     public func saveStations(to url: URL) throws {
-        let data = try JSONEncoder().encode(allStations)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(allStations)
+        try data.write(to: url)
+    }
+
+    /// Exportiert ausgewählte Radiostationen in eine JSON-Datei
+    public func exportStations(_ stations: [CTRKRadioStation], to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(stations)
         try data.write(to: url)
     }
 
@@ -125,11 +142,187 @@ public final class CTRKRadioStationManager: ObservableObject {
     public func addStation(_ station: CTRKRadioStation) {
         guard stationByID[station.id] == nil else { return } // Duplikat vermeiden
         allStations.append(station)
-        indexStations(allStations)
     }
 
     public func removeStation(_ station: CTRKRadioStation) {
         allStations.removeAll { $0.id == station.id }
-        indexStations(allStations)
+    }
+
+    public func deleteStations(ids: [String]) {
+        allStations.removeAll { ids.contains($0.id) }
+    }
+
+    public func updateStation(_ station: CTRKRadioStation) {
+        if let index = allStations.firstIndex(where: { $0.id == station.id }) {
+            allStations[index] = station
+        }
+    }
+
+    // MARK: - FavIcon Cache Directory Management
+
+    /// Setup favicon cache directory relative to database file (macOS only)
+    /// On other platforms, uses default system cache directory
+    public func setupFaviconCacheDirectory(for databaseURL: URL) {
+        #if os(macOS)
+        setupFaviconCacheDirectoryMacOS(for: databaseURL)
+        #else
+        // iOS/iPadOS/tvOS: Use default system cache
+        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+        #endif
+    }
+
+    #if os(macOS)
+    private func setupFaviconCacheDirectoryMacOS(for databaseURL: URL) {
+        let dbName = databaseURL.deletingPathExtension().lastPathComponent
+        let cacheDirectoryName = "\(dbName)_FavIconCache"
+        let parentDirectory = databaseURL.deletingLastPathComponent()
+        let cacheURL = parentDirectory.appendingPathComponent(cacheDirectoryName)
+
+        // Try to load bookmark from UserDefaults
+        let bookmarkKey = faviconCacheBookmarkKey(for: databaseURL)
+        if let savedBookmark = UserDefaults.standard.data(forKey: bookmarkKey) {
+            if resolveFaviconCacheBookmark(savedBookmark, cacheURL: cacheURL) {
+                return
+            }
+        }
+
+        // Check if directory exists
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+
+        if fileManager.fileExists(atPath: cacheURL.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            // Directory exists - request access
+            requestAccessToExistingCache(cacheURL: cacheURL, databaseURL: databaseURL, cacheDirectoryName: cacheDirectoryName)
+        } else {
+            // Directory doesn't exist - request permission to create
+            requestPermissionToCreateCache(parentDirectory: parentDirectory, cacheDirectoryName: cacheDirectoryName, databaseURL: databaseURL)
+        }
+    }
+
+    private func requestAccessToExistingCache(cacheURL: URL, databaseURL: URL, cacheDirectoryName: String) {
+        let alert = NSAlert()
+        alert.messageText = "Grant Access to Favicon Cache"
+        alert.informativeText = "PladioManager needs permission to access the existing favicon cache:\n\n\(cacheDirectoryName)"
+        alert.addButton(withTitle: "Grant Access")
+        alert.addButton(withTitle: "Skip")
+        alert.alertStyle = .informational
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let panel = NSOpenPanel()
+            panel.message = "Select the favicon cache directory"
+            panel.prompt = "Grant Access"
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = cacheURL
+
+            if panel.runModal() == .OK, let selectedDir = panel.url {
+                if selectedDir.startAccessingSecurityScopedResource() {
+                    defer { selectedDir.stopAccessingSecurityScopedResource() }
+
+                    do {
+                        let bookmark = try selectedDir.bookmarkData(
+                            options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                            includingResourceValuesForKeys: nil,
+                            relativeTo: nil
+                        )
+                        saveFaviconCacheBookmark(bookmark, for: databaseURL)
+                        CTRKRadioStationFavIconCacheManager.setCacheDirectory(selectedDir, bookmark: bookmark)
+                    } catch {
+                        print("⚠️ Failed to create bookmark: \(error.localizedDescription)")
+                        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                    }
+                }
+            } else {
+                CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+            }
+        } else {
+            CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+        }
+    }
+
+    private func requestPermissionToCreateCache(parentDirectory: URL, cacheDirectoryName: String, databaseURL: URL) {
+        let alert = NSAlert()
+        alert.messageText = "Create Favicon Cache?"
+        alert.informativeText = "PladioManager would like to create a favicon cache directory next to your database:\n\n\(cacheDirectoryName)\n\nThis allows favicons to be stored locally and distributed with your database."
+        alert.addButton(withTitle: "Create Cache")
+        alert.addButton(withTitle: "Skip")
+        alert.alertStyle = .informational
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let panel = NSOpenPanel()
+            panel.message = "Grant permission to create favicon cache in this folder"
+            panel.prompt = "Grant Access"
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.canCreateDirectories = false
+            panel.directoryURL = parentDirectory
+
+            if panel.runModal() == .OK, let selectedDir = panel.url {
+                if selectedDir.startAccessingSecurityScopedResource() {
+                    defer { selectedDir.stopAccessingSecurityScopedResource() }
+
+                    let finalCacheURL = selectedDir.appendingPathComponent(cacheDirectoryName)
+
+                    if FileManager.default.fileExists(atPath: finalCacheURL.path) {
+                        do {
+                            let bookmark = try finalCacheURL.bookmarkData(
+                                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                includingResourceValuesForKeys: nil,
+                                relativeTo: nil
+                            )
+                            saveFaviconCacheBookmark(bookmark, for: databaseURL)
+                            CTRKRadioStationFavIconCacheManager.setCacheDirectory(finalCacheURL, bookmark: bookmark)
+                        } catch {
+                            print("⚠️ Failed to create bookmark: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            } else {
+                CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+            }
+        } else {
+            CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+        }
+    }
+
+    private func resolveFaviconCacheBookmark(_ bookmark: Data, cacheURL: URL) -> Bool {
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+
+            if isStale {
+                print("⚠️ Cache directory bookmark is stale")
+                return false
+            }
+
+            // Pass bookmark to FavIconCacheManager for security-scoped access
+            CTRKRadioStationFavIconCacheManager.setCacheDirectory(url, bookmark: bookmark)
+            return true
+        } catch {
+            print("❌ Error resolving cache bookmark: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func faviconCacheBookmarkKey(for databaseURL: URL) -> String {
+        return "FaviconCacheBookmark_\(databaseURL.path)"
+    }
+
+    private func saveFaviconCacheBookmark(_ bookmark: Data, for databaseURL: URL) {
+        let key = faviconCacheBookmarkKey(for: databaseURL)
+        UserDefaults.standard.set(bookmark, forKey: key)
+    }
+    #endif
+
+    /// Reset favicon cache to system directory
+    public func resetFaviconCacheToSystemDirectory() {
+        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
     }
 }
