@@ -22,17 +22,33 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     private var _uniqueID: String?
     
     /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
+    /// IMPORTANT: The ID is protocol-independent (HTTP/HTTPS normalized to HTTPS).
+    /// This ensures that changing only the protocol doesn't change the station's identity.
     private static func canonicalStreamKey(from urlString: String) -> String {
         guard var comp = URLComponents(string: urlString) else { return urlString }
-        comp.scheme = comp.scheme?.lowercased()
-        comp.host   = comp.host?.lowercased()
-        // Remove default ports
-        if (comp.scheme == "http"  && comp.port == 80)  { comp.port = nil }
-        if (comp.scheme == "https" && comp.port == 443) { comp.port = nil }
+
+        // PROTOCOL-INDEPENDENT: Always use HTTPS for ID generation
+        // This makes the ID stable when switching between HTTP and HTTPS
+        // (same stream, different protocol = same station identity)
+        if comp.scheme == "http" || comp.scheme == "https" {
+            comp.scheme = "https"
+        } else {
+            comp.scheme = comp.scheme?.lowercased()
+        }
+
+        comp.host = comp.host?.lowercased()
+
+        // Remove default HTTPS port (we normalized to HTTPS above)
+        if comp.port == 443 { comp.port = nil }
+        // Also remove port 80 in case someone uses https://example.com:80
+        if comp.port == 80 { comp.port = nil }
+
         // We intentionally ignore query/fragment to avoid unstable IDs across CDNs
         comp.query = nil
         comp.fragment = nil
-        var path = comp.path
+
+        // Normalize path: lowercase and remove trailing slash
+        var path = comp.path.lowercased()
         if path.hasSuffix("/") { path.removeLast() }
         comp.path = path.isEmpty ? "/" : path
         return comp.string ?? urlString
@@ -57,6 +73,72 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     }
     public static func == (lhs: CTRKRadioStation, rhs: CTRKRadioStation) -> Bool {
         return lhs.id == rhs.id
+    }
+
+    /// Generates an ID for a given stream URL without creating a full station object.
+    /// Useful for testing, migration, and debugging.
+    /// - Parameter streamURL: The stream URL to generate an ID for
+    /// - Returns: The generated station ID (protocol-independent)
+    public static func generateID(for streamURL: String) -> String {
+        let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedURL.isEmpty {
+            return UUID().uuidString.lowercased()
+        }
+
+        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL)
+        let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
+        return uuid.uuidString.lowercased()
+    }
+
+    /// Verifies that two URLs generate the same ID (useful for testing protocol-independence)
+    /// - Parameters:
+    ///   - url1: First URL to compare
+    ///   - url2: Second URL to compare
+    /// - Returns: True if both URLs generate the same station ID
+    public static func haveSameID(_ url1: String, _ url2: String) -> Bool {
+        return generateID(for: url1) == generateID(for: url2)
+    }
+
+    /// Test method to verify protocol-independent ID generation
+    /// This can be called from the app to verify the implementation
+    public static func testProtocolIndependence() {
+        let testCases: [(String, String, String)] = [
+            ("http://example.com/stream", "https://example.com/stream", "Protocol switch"),
+            ("http://example.com:80/stream", "https://example.com/stream", "HTTP with default port"),
+            ("https://example.com:443/stream", "https://example.com/stream", "HTTPS with default port"),
+            ("http://EXAMPLE.COM/Stream", "https://example.com/stream", "Case insensitive"),
+            ("http://example.com/stream/", "https://example.com/stream", "Trailing slash"),
+        ]
+
+        print("🧪 Testing Protocol-Independent ID Generation")
+        print(String(repeating: "=", count: 60))
+
+        var allPassed = true
+        for (url1, url2, description) in testCases {
+            let id1 = generateID(for: url1)
+            let id2 = generateID(for: url2)
+            let passed = id1 == id2
+
+            if passed {
+                print("✅ PASS: \(description)")
+                print("   \(url1)")
+                print("   \(url2)")
+                print("   → Same ID: \(id1)")
+            } else {
+                print("❌ FAIL: \(description)")
+                print("   \(url1) → \(id1)")
+                print("   \(url2) → \(id2)")
+                allPassed = false
+            }
+            print("")
+        }
+
+        print(String(repeating: "=", count: 60))
+        if allPassed {
+            print("✅ All tests passed! Protocol-independent IDs working correctly.")
+        } else {
+            print("❌ Some tests failed. Please review the implementation.")
+        }
     }
     public var id: String {
         // If streamURL is empty or whitespace-only, use stored unique ID or generate new one

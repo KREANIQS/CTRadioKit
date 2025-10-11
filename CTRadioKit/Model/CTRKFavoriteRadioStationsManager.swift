@@ -35,11 +35,17 @@ import Foundation
                 for i in self.favorites.indices {
                     if self.favorites[i].faviconImage == nil,
                        let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: self.favorites[i].id) {
+                        #if os(macOS)
                         if let tiff = img.tiffRepresentation,
                            let bitmap = NSBitmapImageRep(data: tiff),
                            let png = bitmap.representation(using: .png, properties: [:]) {
                             self.favorites[i].faviconImage = png
                         }
+                        #else
+                        if let png = img.pngData() {
+                            self.favorites[i].faviconImage = png
+                        }
+                        #endif
                     }
                 }
             }

@@ -175,7 +175,27 @@ public final class CTRKRadioStationManager: ObservableObject {
     private func setupFaviconCacheDirectoryMacOS(for databaseURL: URL) {
         let dbName = databaseURL.deletingPathExtension().lastPathComponent
         let cacheDirectoryName = "\(dbName)_FavIconCache"
-        let parentDirectory = databaseURL.deletingLastPathComponent()
+
+        // Check if database is in app bundle (read-only)
+        let isInBundle = databaseURL.path.contains(Bundle.main.bundlePath)
+
+        // If in bundle, use Application Support directory instead
+        let parentDirectory: URL
+        if isInBundle {
+            let fileManager = FileManager.default
+            if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                let bundleID = Bundle.main.bundleIdentifier ?? "com.Kreaniqs.Pladio"
+                parentDirectory = appSupport.appendingPathComponent(bundleID)
+                try? fileManager.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+            } else {
+                // Fallback to system cache
+                CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                return
+            }
+        } else {
+            parentDirectory = databaseURL.deletingLastPathComponent()
+        }
+
         let cacheURL = parentDirectory.appendingPathComponent(cacheDirectoryName)
 
         // Try to load bookmark from UserDefaults
@@ -190,12 +210,22 @@ public final class CTRKRadioStationManager: ObservableObject {
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
 
-        if fileManager.fileExists(atPath: cacheURL.path, isDirectory: &isDirectory), isDirectory.boolValue {
-            // Directory exists - request access
-            requestAccessToExistingCache(cacheURL: cacheURL, databaseURL: databaseURL, cacheDirectoryName: cacheDirectoryName)
+        // For bundle databases, automatically create cache in Application Support
+        if isInBundle {
+            if !fileManager.fileExists(atPath: cacheURL.path, isDirectory: &isDirectory) {
+                try? fileManager.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+            }
+            // No bookmark needed for Application Support (always accessible)
+            CTRKRadioStationFavIconCacheManager.setCacheDirectory(cacheURL, bookmark: nil)
         } else {
-            // Directory doesn't exist - request permission to create
-            requestPermissionToCreateCache(parentDirectory: parentDirectory, cacheDirectoryName: cacheDirectoryName, databaseURL: databaseURL)
+            // For external databases, request user permission
+            if fileManager.fileExists(atPath: cacheURL.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                // Directory exists - request access
+                requestAccessToExistingCache(cacheURL: cacheURL, databaseURL: databaseURL, cacheDirectoryName: cacheDirectoryName)
+            } else {
+                // Directory doesn't exist - request permission to create
+                requestPermissionToCreateCache(parentDirectory: parentDirectory, cacheDirectoryName: cacheDirectoryName, databaseURL: databaseURL)
+            }
         }
     }
 
@@ -324,5 +354,179 @@ public final class CTRKRadioStationManager: ObservableObject {
     /// Reset favicon cache to system directory
     public func resetFaviconCacheToSystemDirectory() {
         CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+    }
+
+    // MARK: - Database Migration (Version 1 → Version 2)
+
+    /// Migration result containing statistics about the migration
+    public struct MigrationResult {
+        public let stationsChanged: Int
+        public let faviconsCopied: Int
+        public let faviconsFailed: Int
+        public let idMapping: [String: String] // oldID -> newID
+
+        public var totalStations: Int {
+            stationsChanged + (idMapping.count - stationsChanged)
+        }
+    }
+
+    /// Migrates a database from version 1 to version 2 (protocol-independent IDs)
+    /// - Parameters:
+    ///   - oldStations: Stations from version 1 database
+    ///   - cacheDirectory: Directory containing favicon cache files
+    ///   - progressCallback: Optional callback for progress updates (0.0 to 1.0)
+    /// - Returns: Migration result with statistics
+    public func migrateDatabase(
+        from oldStations: [CTRKRadioStation],
+        cacheDirectory: URL,
+        progressCallback: ((Double, String) -> Void)? = nil
+    ) -> MigrationResult {
+        print("🔄 Starting database migration from Version 1 to Version 2")
+        print("   Stations to check: \(oldStations.count)")
+        print("   Cache directory: \(cacheDirectory.path)")
+
+        var idMapping: [String: String] = [:] // oldID -> newID
+        var changedStations = 0
+
+        // Phase 1: Build ID mapping
+        progressCallback?(0.1, "Analyzing station IDs...")
+
+        for (index, station) in oldStations.enumerated() {
+            // Calculate what the new ID would be with protocol-independent logic
+            let oldID = station.id
+            let newID = CTRKRadioStation.generateID(for: station.streamURL)
+
+            if oldID != newID {
+                idMapping[oldID] = newID
+                changedStations += 1
+            }
+
+            // Progress update every 10 stations
+            if index % 10 == 0 {
+                let progress = 0.1 + (Double(index) / Double(oldStations.count)) * 0.3
+                progressCallback?(progress, "Analyzing station \(index + 1)/\(oldStations.count)")
+            }
+        }
+
+        print("   Found \(changedStations) stations with changed IDs")
+
+        // Phase 2: Migrate favicon cache files
+        progressCallback?(0.4, "Migrating favicon cache...")
+        let (copied, failed) = migrateFaviconCache(
+            idMapping: idMapping,
+            cacheDirectory: cacheDirectory,
+            progressCallback: { subProgress, detail in
+                let totalProgress = 0.4 + (subProgress * 0.6)
+                progressCallback?(totalProgress, detail)
+            }
+        )
+
+        progressCallback?(1.0, "Migration complete")
+
+        let result = MigrationResult(
+            stationsChanged: changedStations,
+            faviconsCopied: copied,
+            faviconsFailed: failed,
+            idMapping: idMapping
+        )
+
+        print("✅ Migration complete:")
+        print("   Stations with changed IDs: \(result.stationsChanged)")
+        print("   Favicons copied: \(result.faviconsCopied)")
+        print("   Favicons failed: \(result.faviconsFailed)")
+
+        return result
+    }
+
+    /// Migrates favicon cache files by renaming them from old IDs to new IDs
+    /// - Parameters:
+    ///   - idMapping: Dictionary mapping old IDs to new IDs
+    ///   - cacheDirectory: Directory containing favicon PNG files
+    ///   - progressCallback: Optional callback for progress updates
+    /// - Returns: Tuple of (successful copies, failed copies)
+    private func migrateFaviconCache(
+        idMapping: [String: String],
+        cacheDirectory: URL,
+        progressCallback: ((Double, String) -> Void)?
+    ) -> (copied: Int, failed: Int) {
+        let fileManager = FileManager.default
+        var successCount = 0
+        var failCount = 0
+        let totalMappings = idMapping.count
+
+        print("📁 Migrating favicon cache files...")
+
+        for (index, (oldID, newID)) in idMapping.enumerated() {
+            let oldFileName = CTRKRadioStationFavIconCacheManager.sanitizedFileName(for: oldID)
+            let newFileName = CTRKRadioStationFavIconCacheManager.sanitizedFileName(for: newID)
+
+            let oldFileURL = cacheDirectory.appendingPathComponent("\(oldFileName).png")
+            let newFileURL = cacheDirectory.appendingPathComponent("\(newFileName).png")
+
+            // Check if old file exists
+            guard fileManager.fileExists(atPath: oldFileURL.path) else {
+                continue // No favicon for this station
+            }
+
+            do {
+                // If new file already exists, this is a conflict
+                // This can happen if multiple HTTP stations map to the same HTTPS ID
+                if fileManager.fileExists(atPath: newFileURL.path) {
+                    print("   ⚠️ Favicon conflict: \(oldFileName).png already exists as \(newFileName).png")
+                    print("      Keeping existing file, removing duplicate")
+                    try? fileManager.removeItem(at: oldFileURL)
+                    continue
+                }
+
+                // Copy file to new location (don't move, in case we need to rollback)
+                try fileManager.copyItem(at: oldFileURL, to: newFileURL)
+                successCount += 1
+                print("   ✅ Copied: \(oldFileName).png → \(newFileName).png")
+
+                // After successful copy, remove old file
+                try? fileManager.removeItem(at: oldFileURL)
+
+            } catch {
+                failCount += 1
+                print("   ❌ Failed to copy \(oldFileName).png: \(error.localizedDescription)")
+            }
+
+            // Progress update
+            if index % 5 == 0 {
+                let progress = Double(index) / Double(totalMappings)
+                progressCallback?(progress, "Migrating favicons \(index + 1)/\(totalMappings)")
+            }
+        }
+
+        print("📁 Favicon cache migration: \(successCount) copied, \(failCount) failed")
+        return (successCount, failCount)
+    }
+
+    /// Returns the favicon cache directory for a given database URL
+    /// - Parameter databaseURL: URL of the database file
+    /// - Returns: URL of the favicon cache directory
+    public func faviconCacheDirectory(for databaseURL: URL) -> URL {
+        #if os(macOS)
+        let dbName = databaseURL.deletingPathExtension().lastPathComponent
+        let cacheDirectoryName = "\(dbName)_FavIconCache"
+
+        // Check if database is in app bundle (read-only)
+        let isInBundle = databaseURL.path.contains(Bundle.main.bundlePath)
+
+        if isInBundle {
+            let fileManager = FileManager.default
+            if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                let bundleID = Bundle.main.bundleIdentifier ?? "com.Kreaniqs.Pladio"
+                let parentDirectory = appSupport.appendingPathComponent(bundleID)
+                return parentDirectory.appendingPathComponent(cacheDirectoryName)
+            }
+        } else {
+            let parentDirectory = databaseURL.deletingLastPathComponent()
+            return parentDirectory.appendingPathComponent(cacheDirectoryName)
+        }
+        #endif
+
+        // Fallback to system cache directory
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
     }
 }
