@@ -1,6 +1,8 @@
 // macOS-specific import for NSBitmapImageRep
 #if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
 #endif
 import Foundation
 import CTSwiftLogger
@@ -23,11 +25,17 @@ import Combine
                 for i in self.recentlyPlayed.indices {
                     if self.recentlyPlayed[i].faviconImage == nil,
                        let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: self.recentlyPlayed[i].id) {
+                        #if os(macOS)
                         if let tiffData = img.tiffRepresentation,
                            let bitmap = NSBitmapImageRep(data: tiffData),
                            let pngData = bitmap.representation(using: .png, properties: [:]) {
                             self.recentlyPlayed[i].faviconImage = pngData
                         }
+                        #else
+                        if let pngData = img.pngData() {
+                            self.recentlyPlayed[i].faviconImage = pngData
+                        }
+                        #endif
                     }
                 }
             }
@@ -39,11 +47,17 @@ import Combine
         recent.insert(station, at: 0)
         // Set favicon immediately if it is already in memory and prewarm async
         if let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) {
+            #if os(macOS)
             if let tiffData = img.tiffRepresentation,
                let bitmap = NSBitmapImageRep(data: tiffData),
                let pngData = bitmap.representation(using: .png, properties: [:]) {
                 recent[0].faviconImage = pngData
             }
+            #else
+            if let pngData = img.pngData() {
+                recent[0].faviconImage = pngData
+            }
+            #endif
         }
         CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
         if recent.count > maxCount {
@@ -62,11 +76,18 @@ import Combine
             let stationID = station.id
             Task { @MainActor in
                 // Read-only in-memory lookup (no disk I/O, no state mutation during render)
-                if let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: stationID),
-                   let tiff = img.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiff),
-                   let png = bitmap.representation(using: .png, properties: [:]) {
-                    decoded[idx].faviconImage = png
+                if let img = CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: stationID) {
+                    #if os(macOS)
+                    if let tiff = img.tiffRepresentation,
+                       let bitmap = NSBitmapImageRep(data: tiff),
+                       let png = bitmap.representation(using: .png, properties: [:]) {
+                        decoded[idx].faviconImage = png
+                    }
+                    #else
+                    if let png = img.pngData() {
+                        decoded[idx].faviconImage = png
+                    }
+                    #endif
                 }
                 // Prewarm disk cache asynchronously if needed
                 CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
@@ -81,9 +102,15 @@ import Combine
             if let image = station.faviconImage,
                CTRKRadioStationFavIconCacheManager.shared.imageInMemory(for: station.id) == nil {
                 Task { @MainActor in
+                    #if os(macOS)
                     if let nsImage = NSImage(data: image) {
                         CTRKRadioStationFavIconCacheManager.shared.saveImage(nsImage, for: station.id)
                     }
+                    #else
+                    if let uiImage = UIImage(data: image) {
+                        CTRKRadioStationFavIconCacheManager.shared.saveImage(uiImage, for: station.id)
+                    }
+                    #endif
                 }
             }
         }

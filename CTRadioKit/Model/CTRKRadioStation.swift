@@ -288,12 +288,14 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     
     #if os(iOS)
     func squareFavicon(canvas: CGFloat) -> UIImage? {
-        guard let image = faviconImage else { return nil }
+        guard let imageData = faviconImage,
+              let image = UIImage(data: imageData) else { return nil }
         return CTRKRadioStation.squareFit(image: image, canvas: canvas)
     }
 
     func downscaledFavicon(maxDimension: CGFloat) -> UIImage? {
-        guard let image = faviconImage else { return nil }
+        guard let imageData = faviconImage,
+              let image = UIImage(data: imageData) else { return nil }
         return CTRKRadioStation.downscale(image: image, maxDimension: maxDimension)
     }
 

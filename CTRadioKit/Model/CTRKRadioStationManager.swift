@@ -52,9 +52,10 @@ public final class CTRKRadioStationManager: ObservableObject {
     public func loadStations(from url: URL) throws {
         let data = try Data(contentsOf: url)
         do {
-            let decoded = try JSONDecoder().decode([CTRKRadioStation].self, from: data)
-            self.allStations = decoded
-            self.indexStations(decoded)
+            // Use the database loader which supports both formats
+            let database = try CTRKRadioStationDatabaseLoader.load(from: data)
+            self.allStations = database.stations
+            self.indexStations(database.stations)
         } catch {
             if let json = try? JSONSerialization.jsonObject(with: data, options: []),
                let first = (json as? [Any])?.first {
