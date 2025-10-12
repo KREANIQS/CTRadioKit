@@ -252,8 +252,9 @@ public final class CTRKRadioStationManager: ObservableObject {
                     defer { selectedDir.stopAccessingSecurityScopedResource() }
 
                     do {
+                        // WICHTIG: Ohne .securityScopeAllowOnlyReadAccess für Schreibzugriff!
                         let bookmark = try selectedDir.bookmarkData(
-                            options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                            options: [.withSecurityScope],
                             includingResourceValuesForKeys: nil,
                             relativeTo: nil
                         )
@@ -298,8 +299,9 @@ public final class CTRKRadioStationManager: ObservableObject {
 
                     if FileManager.default.fileExists(atPath: finalCacheURL.path) {
                         do {
+                            // WICHTIG: Ohne .securityScopeAllowOnlyReadAccess für Schreibzugriff!
                             let bookmark = try finalCacheURL.bookmarkData(
-                                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                                options: [.withSecurityScope],
                                 includingResourceValuesForKeys: nil,
                                 relativeTo: nil
                             )
@@ -331,6 +333,25 @@ public final class CTRKRadioStationManager: ObservableObject {
             if isStale {
                 print("⚠️ Cache directory bookmark is stale")
                 return false
+            }
+
+            // Test if bookmark has write permissions by attempting to access
+            if url.startAccessingSecurityScopedResource() {
+                defer { url.stopAccessingSecurityScopedResource() }
+
+                // Try to create a test file to verify write permissions
+                let testFile = url.appendingPathComponent(".write_test_\(UUID().uuidString)")
+                let testData = Data("test".utf8)
+
+                do {
+                    try testData.write(to: testFile)
+                    try? FileManager.default.removeItem(at: testFile)
+                    print("✅ Cache bookmark has write permissions")
+                } catch {
+                    print("⚠️ Cache bookmark is READ-ONLY, needs to be recreated")
+                    print("   Error: \(error.localizedDescription)")
+                    return false // Force recreation with write permissions
+                }
             }
 
             // Pass bookmark to FavIconCacheManager for security-scoped access

@@ -120,6 +120,77 @@ import AppKit
         }
     }
 
+    /// Updates an existing favicon in the cache with security-scoped access.
+    /// This method ensures proper access to the cache directory before writing.
+    /// Use this when updating a favicon that was loaded from a custom cache directory.
+    /// - Parameters:
+    ///   - image: The new image to save
+    ///   - stationID: The station ID
+    /// - Returns: True if successful, false otherwise
+    @discardableResult
+    public func updateImageWithSecurityScope(_ image: NSImage, for stationID: String) -> Bool {
+        // Update memory caches first
+        cachedImages[stationID] = image
+        let key = stationID as NSString
+        Self.memoryCache.setObject(image, forKey: key)
+        Self.memoryCacheKeySet.insert(stationID)
+
+        // Convert image to PNG data
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let data = bitmap.representation(using: .png, properties: [:]) else {
+            return false
+        }
+
+        let url = Self.fileURL(for: stationID)
+
+        // WICHTIG: Ensure security-scoped access is active
+        var needsToStop = false
+        if !Self.isAccessingSecurityScopedResource {
+            // Try to start access using the stored bookmark
+            if let bookmark = Self.cacheDirectoryBookmark {
+                Self.startAccessingCacheDirectory(bookmark: bookmark)
+                needsToStop = true
+            }
+        }
+
+        defer {
+            if needsToStop {
+                Self.stopAccessingCacheDirectory()
+            }
+        }
+
+        // If we have security-scoped access, we can write directly
+        if Self.isAccessingSecurityScopedResource {
+            do {
+                // First, delete the old file if it exists
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try? FileManager.default.removeItem(at: url)
+                }
+
+                // Write the new file
+                try data.write(to: url, options: [])
+
+                // Verify the file was written
+                if FileManager.default.fileExists(atPath: url.path),
+                   let _ = try? Data(contentsOf: url) {
+                    return true
+                }
+                return false
+            } catch {
+                return false
+            }
+        } else {
+            // Fallback: Try to write without security-scoped access
+            do {
+                try data.write(to: url, options: .atomic)
+                return true
+            } catch {
+                return false
+            }
+        }
+    }
+
     /// Triggers an async disk load if the image is not in memory yet.
     /// Call from `.task`/`onAppear` (NOT from inside `body`) together with `imageInMemory(for:)`.
     public func loadCachedImageIfNeededAsync(for stationID: String) {
