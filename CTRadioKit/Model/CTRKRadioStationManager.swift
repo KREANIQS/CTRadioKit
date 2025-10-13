@@ -297,19 +297,26 @@ public final class CTRKRadioStationManager: ObservableObject {
 
                     let finalCacheURL = selectedDir.appendingPathComponent(cacheDirectoryName)
 
-                    if FileManager.default.fileExists(atPath: finalCacheURL.path) {
-                        do {
-                            // WICHTIG: Ohne .securityScopeAllowOnlyReadAccess für Schreibzugriff!
-                            let bookmark = try finalCacheURL.bookmarkData(
-                                options: [.withSecurityScope],
-                                includingResourceValuesForKeys: nil,
-                                relativeTo: nil
-                            )
-                            saveFaviconCacheBookmark(bookmark, for: databaseURL)
-                            CTRKRadioStationFavIconCacheManager.setCacheDirectory(finalCacheURL, bookmark: bookmark)
-                        } catch {
-                            print("⚠️ Failed to create bookmark: \(error.localizedDescription)")
+                    do {
+                        // Create directory if it doesn't exist
+                        if !FileManager.default.fileExists(atPath: finalCacheURL.path) {
+                            try FileManager.default.createDirectory(at: finalCacheURL, withIntermediateDirectories: true)
+                            print("✅ Created favicon cache directory: \(finalCacheURL.path)")
                         }
+
+                        // Create bookmark for the cache directory
+                        // WICHTIG: Ohne .securityScopeAllowOnlyReadAccess für Schreibzugriff!
+                        let bookmark = try finalCacheURL.bookmarkData(
+                            options: [.withSecurityScope],
+                            includingResourceValuesForKeys: nil,
+                            relativeTo: nil
+                        )
+                        saveFaviconCacheBookmark(bookmark, for: databaseURL)
+                        CTRKRadioStationFavIconCacheManager.setCacheDirectory(finalCacheURL, bookmark: bookmark)
+                        print("✅ Favicon cache setup complete: \(finalCacheURL.lastPathComponent)")
+                    } catch {
+                        print("⚠️ Failed to create cache directory or bookmark: \(error.localizedDescription)")
+                        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
                     }
                 }
             } else {

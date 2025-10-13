@@ -16,9 +16,18 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
     private let timeout: TimeInterval = 10.0
 
     public init() {
-        let config = URLSessionConfiguration.default
+        // Use ephemeral configuration to reduce caching-related logs
+        let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
         config.timeoutIntervalForResource = timeout
+
+        // Reduce network-related console logs
+        config.waitsForConnectivity = false
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+
+        // Set connection limits to reduce retry logs
+        config.httpMaximumConnectionsPerHost = 2
+
         urlSession = URLSession(configuration: config)
     }
 
@@ -33,7 +42,9 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
 
         for (index, station) in stations.enumerated() {
             // Check if cancelled
-            if Task.isCancelled { break }
+            if Task.isCancelled {
+                break
+            }
 
             let progress = Double(index) / Double(totalStations)
             onProgress(progress, "Checking station \(index + 1) of \(totalStations)", station.name)
@@ -42,7 +53,7 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
             await checkStreamHealth(for: &updatedStation)
             await checkFaviconHealth(for: &updatedStation)
 
-            // Call update callback for real-time UI updates, even if partially completed
+            // Call update callback for batch collection
             onStationUpdated(updatedStation)
 
             // Check for cancellation before sleep to be more responsive
@@ -89,10 +100,13 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
         }
 
         do {
-            var request = URLRequest(url: url)
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
             request.httpMethod = "HEAD"
             request.setValue("PladioManager/1.0", forHTTPHeaderField: "User-Agent")
             request.setValue("*/*", forHTTPHeaderField: "Accept")
+
+            // Set lower priority to reduce aggressive network logging
+            request.networkServiceType = .background
 
             let (_, response) = try await urlSession.data(for: request)
 
@@ -190,10 +204,13 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
         }
 
         do {
-            var request = URLRequest(url: url)
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
             request.httpMethod = "GET"
             request.setValue("PladioManager/1.0", forHTTPHeaderField: "User-Agent")
             request.setValue("image/*", forHTTPHeaderField: "Accept")
+
+            // Set lower priority to reduce aggressive network logging
+            request.networkServiceType = .background
 
             let (data, response) = try await urlSession.data(for: request)
 
@@ -237,20 +254,32 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
     }
 
     private func convertToHTTP(_ url: String) -> String? {
-        if url.hasPrefix("https://") {
-            return url.replacingOccurrences(of: "https://", with: "http://")
-        } else if url.hasPrefix("http://") {
-            return url
+        // Reject empty, whitespace-only, or "null" URLs
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty && trimmed.lowercased() != "null" else {
+            return nil
         }
-        return "http://" + url
+
+        if trimmed.hasPrefix("https://") {
+            return trimmed.replacingOccurrences(of: "https://", with: "http://")
+        } else if trimmed.hasPrefix("http://") {
+            return trimmed
+        }
+        return "http://" + trimmed
     }
 
     private func convertToHTTPS(_ url: String) -> String? {
-        if url.hasPrefix("http://") {
-            return url.replacingOccurrences(of: "http://", with: "https://")
-        } else if url.hasPrefix("https://") {
-            return url
+        // Reject empty, whitespace-only, or "null" URLs
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty && trimmed.lowercased() != "null" else {
+            return nil
         }
-        return "https://" + url
+
+        if trimmed.hasPrefix("http://") {
+            return trimmed.replacingOccurrences(of: "http://", with: "https://")
+        } else if trimmed.hasPrefix("https://") {
+            return trimmed
+        }
+        return "https://" + trimmed
     }
 }
