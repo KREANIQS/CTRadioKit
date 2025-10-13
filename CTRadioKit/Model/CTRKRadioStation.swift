@@ -20,11 +20,15 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
 
     // Internal storage for unique ID (for new stations without streamURL)
     private var _uniqueID: String?
-    
+
+    // V3: Persistent ID storage - set once at creation, stays stable even if streamURL changes
+    private var persistentID: String?
+
     /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
     /// IMPORTANT: The ID is protocol-independent (HTTP/HTTPS normalized to HTTPS).
     /// This ensures that changing only the protocol doesn't change the station's identity.
-    private static func canonicalStreamKey(from urlString: String) -> String {
+    /// Optionally includes country code for disambiguating identical streams in different countries.
+    private static func canonicalStreamKey(from urlString: String, country: String? = nil) -> String {
         guard var comp = URLComponents(string: urlString) else { return urlString }
 
         // PROTOCOL-INDEPENDENT: Always use HTTPS for ID generation
@@ -51,7 +55,15 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         var path = comp.path.lowercased()
         if path.hasSuffix("/") { path.removeLast() }
         comp.path = path.isEmpty ? "/" : path
-        return comp.string ?? urlString
+
+        var result = comp.string ?? urlString
+
+        // Append country code if provided (for disambiguating identical streams)
+        if let country = country, !country.isEmpty {
+            result += "|country:\(country.uppercased())"
+        }
+
+        return result
     }
 
     /// Minimal UUIDv5 (SHA-1, name-based) implementation per RFC 4122.
@@ -141,15 +153,21 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         }
     }
     public var id: String {
-        // If streamURL is empty or whitespace-only, use stored unique ID or generate new one
+        // V3: If we have a persistent ID, use it (stable across streamURL changes)
+        if let persistentID = persistentID {
+            return persistentID
+        }
+
+        // Legacy behavior: If streamURL is empty or whitespace-only, use stored unique ID or generate new one
         let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedURL.isEmpty {
             // Return stored unique ID or generate a new UUID
             return _uniqueID ?? UUID().uuidString.lowercased()
         }
 
-        // Normal case: derive ID from streamURL
-        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL)
+        // Legacy fallback: derive ID from streamURL + country (for V1/V2 databases)
+        // Include country to disambiguate identical streams in different countries
+        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL, country: country)
         let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
         return uuid.uuidString.lowercased()
     }
@@ -172,6 +190,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     
     enum CodingKeys: String, CodingKey {
         case _uniqueID
+        case persistentID // V3: Persistent ID field
         case name
         case streamURL
         case homepageURL
@@ -192,6 +211,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self._uniqueID = try container.decodeIfPresent(String.self, forKey: ._uniqueID)
+        self.persistentID = try container.decodeIfPresent(String.self, forKey: .persistentID)
         self.name = try container.decode(String.self, forKey: .name)
         self.streamURL = try container.decode(String.self, forKey: .streamURL)
         self.homepageURL = try container.decodeIfPresent(String.self, forKey: .homepageURL) ?? ""
@@ -216,6 +236,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(_uniqueID, forKey: ._uniqueID)
+        try container.encodeIfPresent(persistentID, forKey: .persistentID)
         try container.encode(name, forKey: .name)
         try container.encode(streamURL, forKey: .streamURL)
         try container.encode(homepageURL, forKey: .homepageURL)
@@ -250,9 +271,20 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         curated: Bool = false,
         qualityCheck: CTRKQualityCheckStatus = .open
     ) {
-        // Generate unique ID if streamURL is empty
+        // V3: Generate persistent ID at creation time
         let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        self._uniqueID = trimmedURL.isEmpty ? UUID().uuidString.lowercased() : nil
+
+        if trimmedURL.isEmpty {
+            // For stations without streamURL, generate unique ID
+            self._uniqueID = UUID().uuidString.lowercased()
+            self.persistentID = self._uniqueID
+        } else {
+            // For stations with streamURL, generate ID from streamURL and store it persistently
+            let key = CTRKRadioStation.canonicalStreamKey(from: streamURL)
+            let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
+            self.persistentID = uuid.uuidString.lowercased()
+            self._uniqueID = nil
+        }
 
         self.name = name
         self.streamURL = streamURL

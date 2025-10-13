@@ -13,7 +13,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
     /// Current database version
     /// Version 1: Original format (array of stations without version field)
     /// Version 2: Protocol-independent IDs (HTTP/HTTPS normalized)
-    public static let currentVersion = 2
+    /// Version 3: Persistent IDs (stored in JSON, stable across streamURL changes)
+    public static let currentVersion = 3
 
     /// Database format version
     public var version: Int
@@ -84,8 +85,45 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return "Version 1 (Original format)"
         case 2:
             return "Version 2 (Protocol-independent IDs)"
+        case 3:
+            return "Version 3 (Persistent IDs)"
         default:
             return "Version \(version) (Unknown)"
+        }
+    }
+
+    /// Migrates stations from V2 to V3 by storing their current IDs as persistent IDs
+    /// This ensures IDs remain stable even if streamURL changes later
+    /// - Returns: New stations array with persistent IDs
+    public func migrateToV3() -> [CTRKRadioStation] {
+        guard version == 2 else { return stations }
+
+        // For each station, capture its current computed ID and store it as persistentID
+        return stations.map { station in
+            // The station's current ID (computed from streamURL)
+            let currentID = station.id
+
+            // Create a new station with the same data but with persistentID set
+            // We need to use a mirror/reflection approach since CTRKRadioStation is a struct
+            // and we can't directly modify the private persistentID field after creation.
+            // Instead, we'll encode and re-decode with the persistentID added.
+
+            // Encode station to dictionary
+            if let data = try? JSONEncoder().encode(station),
+               var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+
+                // Add persistentID field with current ID
+                json["persistentID"] = currentID
+
+                // Re-encode and decode
+                if let newData = try? JSONSerialization.data(withJSONObject: json),
+                   let migratedStation = try? JSONDecoder().decode(CTRKRadioStation.self, from: newData) {
+                    return migratedStation
+                }
+            }
+
+            // Fallback: return original station (shouldn't happen)
+            return station
         }
     }
 }
