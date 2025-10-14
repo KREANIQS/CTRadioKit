@@ -14,6 +14,17 @@ import Foundation
 import CryptoKit
 import CTSwiftLogger
 
+// MARK: - Location Source
+
+public enum LocationSource: String, Codable, Sendable {
+    case claudeAPI = "Claude AI"
+    case homepage = "Homepage"
+    case geocoding = "Geocoding"
+    case manual = "Manual"
+}
+
+// MARK: - Radio Station Model
+
 public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     // Namespace for UUIDv5 generation. Generate once and keep constant for the app.
     private static let idNamespace = UUID(uuidString: "9C5B1E63-6C9E-4C5B-A2B6-0E8B8D6D2EAF")!
@@ -186,6 +197,13 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     public var curated: Bool
     public var qualityCheck: CTRKQualityCheckStatus
 
+    // Location information for "Nearest" and "Local Radio Stations" search
+    public var locationName: String?
+    public var locationLatitude: Double?
+    public var locationLongitude: Double?
+    public var locationSource: LocationSource?
+    public var lastLocationEnrichmentCheck: Date?
+
     public var faviconImage: Data?
     
     enum CodingKeys: String, CodingKey {
@@ -206,6 +224,11 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         case labels
         case curated
         case qualityCheck
+        case locationName
+        case locationLatitude
+        case locationLongitude
+        case locationSource
+        case lastLocationEnrichmentCheck
     }
     
     public init(from decoder: Decoder) throws {
@@ -226,6 +249,11 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         self.labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
         self.curated = try container.decodeIfPresent(Bool.self, forKey: .curated) ?? false
         self.qualityCheck = try container.decodeIfPresent(CTRKQualityCheckStatus.self, forKey: .qualityCheck) ?? .open
+        self.locationName = try container.decodeIfPresent(String.self, forKey: .locationName)
+        self.locationLatitude = try container.decodeIfPresent(Double.self, forKey: .locationLatitude)
+        self.locationLongitude = try container.decodeIfPresent(Double.self, forKey: .locationLongitude)
+        self.locationSource = try container.decodeIfPresent(LocationSource.self, forKey: .locationSource)
+        self.lastLocationEnrichmentCheck = try container.decodeIfPresent(Date.self, forKey: .lastLocationEnrichmentCheck)
         #if os(iOS)
         self.faviconImage = nil
         #elseif os(macOS)
@@ -252,6 +280,11 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         try container.encode(labels, forKey: .labels)
         try container.encode(curated, forKey: .curated)
         try container.encode(qualityCheck, forKey: .qualityCheck)
+        try container.encodeIfPresent(locationName, forKey: .locationName)
+        try container.encodeIfPresent(locationLatitude, forKey: .locationLatitude)
+        try container.encodeIfPresent(locationLongitude, forKey: .locationLongitude)
+        try container.encodeIfPresent(locationSource, forKey: .locationSource)
+        try container.encodeIfPresent(lastLocationEnrichmentCheck, forKey: .lastLocationEnrichmentCheck)
     }
     
     public init(
@@ -269,7 +302,12 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         health: CTRKRadioStationHealth = .init(),
         labels: [String],
         curated: Bool = false,
-        qualityCheck: CTRKQualityCheckStatus = .open
+        qualityCheck: CTRKQualityCheckStatus = .open,
+        locationName: String? = nil,
+        locationLatitude: Double? = nil,
+        locationLongitude: Double? = nil,
+        locationSource: LocationSource? = nil,
+        lastLocationEnrichmentCheck: Date? = nil
     ) {
         // V3: Generate persistent ID at creation time
         let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -300,6 +338,11 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         self.health = health
         self.curated = curated
         self.qualityCheck = qualityCheck
+        self.locationName = locationName
+        self.locationLatitude = locationLatitude
+        self.locationLongitude = locationLongitude
+        self.locationSource = locationSource
+        self.lastLocationEnrichmentCheck = lastLocationEnrichmentCheck
         #if os(iOS)
         if let image = faviconImage as? UIImage {
             self.faviconImage = image.pngData()
