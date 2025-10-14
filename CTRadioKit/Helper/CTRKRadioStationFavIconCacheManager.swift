@@ -61,10 +61,10 @@ import AppKit
 
     /// Triggers an async disk load if the image is not in memory yet.
     /// Call from `.task`/`onAppear` (NOT from inside `body`) together with `imageInMemory(for:)`.
-    public func loadCachedImageIfNeededAsync(for stationID: String) {
+    public func loadCachedImageIfNeededAsync(for stationID: String) async {
         guard cachedImages[stationID] == nil else { return }
 
-        Task.detached {
+        await Task.detached {
             let url = await Self.fileURL(for: stationID)
             guard let data = try? Data(contentsOf: url),
                   let image = UIImage(data: data) else { return }
@@ -75,7 +75,7 @@ import AppKit
                 Self.memoryCache.setObject(image, forKey: key)
                 Self.memoryCacheKeySet.insert(stationID)
             }
-        }
+        }.value
     }
     #elseif os(macOS)
     @Published public private(set) var cachedImages: [String: NSImage] = [:]
@@ -193,10 +193,10 @@ import AppKit
 
     /// Triggers an async disk load if the image is not in memory yet.
     /// Call from `.task`/`onAppear` (NOT from inside `body`) together with `imageInMemory(for:)`.
-    public func loadCachedImageIfNeededAsync(for stationID: String) {
+    public func loadCachedImageIfNeededAsync(for stationID: String) async {
         guard cachedImages[stationID] == nil else { return }
 
-        Task.detached {
+        await Task.detached {
             let url = await Self.fileURL(for: stationID)
             guard let data = try? Data(contentsOf: url) else { return }
 
@@ -208,7 +208,7 @@ import AppKit
                     Self.memoryCacheKeySet.insert(stationID)
                 }
             }
-        }
+        }.value
     }
     #endif
 

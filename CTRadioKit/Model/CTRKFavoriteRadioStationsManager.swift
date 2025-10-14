@@ -81,7 +81,9 @@ import Foundation
                 }
                 #endif
             }
-            CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+            Task { @MainActor in
+                await CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+            }
         }
         saveFavorites()
         
@@ -129,7 +131,9 @@ import Foundation
             }
             #endif
         }
-        CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+        Task { @MainActor in
+            await CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+        }
         saveFavorites()
         favoriteIDs = Set(favoriteIDs)
     }
@@ -170,7 +174,7 @@ import Foundation
                         }
                         #endif
                     }
-                    CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
+                    await CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
                 }
             }
 #if DEBUG

@@ -59,7 +59,9 @@ import Combine
             }
             #endif
         }
-        CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+        Task { @MainActor in
+            await CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: station.id)
+        }
         if recent.count > maxCount {
             recent = Array(recent.prefix(maxCount))
         }
@@ -90,7 +92,7 @@ import Combine
                     #endif
                 }
                 // Prewarm disk cache asynchronously if needed
-                CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
+                await CTRKRadioStationFavIconCacheManager.shared.loadCachedImageIfNeededAsync(for: stationID)
             }
         }
         self.recentlyPlayed = decoded
