@@ -205,35 +205,51 @@ public final class CTRKRadioStationManager: ObservableObject {
 
     #if os(macOS)
     private func setupFaviconCacheDirectoryMacOS(for databaseURL: URL) {
-        let dbName = databaseURL.deletingPathExtension().lastPathComponent
-        let cacheDirectoryName = "\(dbName)_FavIconCache"
-
         // Check if database is in app bundle (read-only)
         let isInBundle = databaseURL.path.contains(Bundle.main.bundlePath)
 
-        // If in bundle, use Application Support directory instead
-        let parentDirectory: URL
+        #if DEBUG
+        print("📂 [FavIcon] Database URL: \(databaseURL.path)")
+        print("📂 [FavIcon] Bundle path: \(Bundle.main.bundlePath)")
+        print("📂 [FavIcon] Is in bundle: \(isInBundle)")
+        #endif
+
         if isInBundle {
-            let fileManager = FileManager.default
-            if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-                let bundleID = Bundle.main.bundleIdentifier ?? "com.Kreaniqs.Pladio"
-                parentDirectory = appSupport.appendingPathComponent(bundleID)
-                try? fileManager.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+            // For bundle databases, use flat bundle resources structure (same as iOS)
+            // Favicons are copied flat into the bundle (persistentIDs are unique across databases)
+            if let resourceURL = Bundle.main.resourceURL {
+                CTRKRadioStationFavIconCacheManager.setCacheDirectory(resourceURL, bookmark: nil)
+                #if DEBUG
+                print("✅ [FavIcon] Using flat bundle favicon cache: \(resourceURL.path)")
+                #endif
+                return
             } else {
                 // Fallback to system cache
                 CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                #if DEBUG
+                print("⚠️ [FavIcon] Could not get bundle resourceURL, using system cache")
+                #endif
                 return
             }
-        } else {
-            parentDirectory = databaseURL.deletingLastPathComponent()
         }
 
+        // For external databases (not in bundle), use directory-based cache with security-scoped bookmarks
+        let dbName = databaseURL.deletingPathExtension().lastPathComponent
+        let cacheDirectoryName = "\(dbName)_FavIconCache"
+        let parentDirectory = databaseURL.deletingLastPathComponent()
         let cacheURL = parentDirectory.appendingPathComponent(cacheDirectoryName)
+
+        #if DEBUG
+        print("📂 [FavIcon] External database, looking for cache at: \(cacheURL.path)")
+        #endif
 
         // Try to load bookmark from UserDefaults
         let bookmarkKey = faviconCacheBookmarkKey(for: databaseURL)
         if let savedBookmark = UserDefaults.standard.data(forKey: bookmarkKey) {
             if resolveFaviconCacheBookmark(savedBookmark, cacheURL: cacheURL) {
+                #if DEBUG
+                print("✅ [FavIcon] Restored cache from bookmark: \(cacheURL.path)")
+                #endif
                 return
             }
         }
@@ -242,22 +258,12 @@ public final class CTRKRadioStationManager: ObservableObject {
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
 
-        // For bundle databases, automatically create cache in Application Support
-        if isInBundle {
-            if !fileManager.fileExists(atPath: cacheURL.path, isDirectory: &isDirectory) {
-                try? fileManager.createDirectory(at: cacheURL, withIntermediateDirectories: true)
-            }
-            // No bookmark needed for Application Support (always accessible)
-            CTRKRadioStationFavIconCacheManager.setCacheDirectory(cacheURL, bookmark: nil)
+        if fileManager.fileExists(atPath: cacheURL.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            // Directory exists - request access
+            requestAccessToExistingCache(cacheURL: cacheURL, databaseURL: databaseURL, cacheDirectoryName: cacheDirectoryName)
         } else {
-            // For external databases, request user permission
-            if fileManager.fileExists(atPath: cacheURL.path, isDirectory: &isDirectory), isDirectory.boolValue {
-                // Directory exists - request access
-                requestAccessToExistingCache(cacheURL: cacheURL, databaseURL: databaseURL, cacheDirectoryName: cacheDirectoryName)
-            } else {
-                // Directory doesn't exist - request permission to create
-                requestPermissionToCreateCache(parentDirectory: parentDirectory, cacheDirectoryName: cacheDirectoryName, databaseURL: databaseURL)
-            }
+            // Directory doesn't exist - request permission to create
+            requestPermissionToCreateCache(parentDirectory: parentDirectory, cacheDirectoryName: cacheDirectoryName, databaseURL: databaseURL)
         }
     }
 
