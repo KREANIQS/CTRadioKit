@@ -14,7 +14,34 @@ import AppKit
 
 @MainActor public final class CTRKRadioStationFavIconCacheManager: ObservableObject {
     public static let shared = CTRKRadioStationFavIconCacheManager()
-    public init() {}
+
+    // Memory management configuration
+    private static let maxPublishedCacheSize = 100  // Limit published dictionary to 100 images
+    private static let maxMemoryCacheSize = 200     // NSCache can hold up to 200 images
+    private static let memoryCacheByteLimit = 50 * 1024 * 1024  // 50 MB total memory limit
+
+    // LRU tracking for published cache
+    private var accessOrder: [String] = []  // Tracks access order for LRU eviction
+
+    public init() {
+        // Configure NSCache limits
+        Self.memoryCache.countLimit = Self.maxMemoryCacheSize
+        Self.memoryCache.totalCostLimit = Self.memoryCacheByteLimit
+        // NSCache will automatically evict objects based on count/cost limits
+
+        // Register for memory warnings
+        #if os(iOS)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleMemoryWarning()
+            }
+        }
+        #endif
+    }
 
     // Custom cache directory support (for database-relative caching)
     private static var customCacheDirectory: URL?
@@ -22,7 +49,8 @@ import AppKit
     #if os(macOS)
     // Security-scoped bookmark for custom cache directory (macOS only)
     private static var cacheDirectoryBookmark: Data?
-    private static var isAccessingSecurityScopedResource = false
+    private static var securityScopeAccessCount = 0  // Reference counting for nested access
+    private static var securityScopeURL: URL?  // Track the URL we're accessing
     #endif
 
     #if os(iOS)
@@ -51,6 +79,9 @@ import AppKit
 
     public func saveImage(_ image: UIImage, for stationID: String) {
         cachedImages[stationID] = image
+        trackAccess(for: stationID)
+        evictLRUIfNeeded()
+
         let key = stationID as NSString
         Self.memoryCache.setObject(image, forKey: key)
         Self.memoryCacheKeySet.insert(stationID)
@@ -62,7 +93,10 @@ import AppKit
     /// Triggers an async disk load if the image is not in memory yet.
     /// Call from `.task`/`onAppear` (NOT from inside `body`) together with `imageInMemory(for:)`.
     public func loadCachedImageIfNeededAsync(for stationID: String) async {
-        guard cachedImages[stationID] == nil else { return }
+        guard cachedImages[stationID] == nil else {
+            trackAccess(for: stationID)
+            return
+        }
 
         await Task.detached {
             let url = await Self.fileURL(for: stationID)
@@ -71,6 +105,9 @@ import AppKit
 
             await MainActor.run {
                 self.cachedImages[stationID] = image
+                self.trackAccess(for: stationID)
+                self.evictLRUIfNeeded()
+
                 let key = stationID as NSString
                 Self.memoryCache.setObject(image, forKey: key)
                 Self.memoryCacheKeySet.insert(stationID)
@@ -104,6 +141,9 @@ import AppKit
     @discardableResult
     public func saveImage(_ image: NSImage, for stationID: String) -> Bool {
         cachedImages[stationID] = image
+        trackAccess(for: stationID)
+        evictLRUIfNeeded()
+
         let key = stationID as NSString
         Self.memoryCache.setObject(image, forKey: key)
         Self.memoryCacheKeySet.insert(stationID)
@@ -131,6 +171,9 @@ import AppKit
     public func updateImageWithSecurityScope(_ image: NSImage, for stationID: String) -> Bool {
         // Update memory caches first
         cachedImages[stationID] = image
+        trackAccess(for: stationID)
+        evictLRUIfNeeded()
+
         let key = stationID as NSString
         Self.memoryCache.setObject(image, forKey: key)
         Self.memoryCacheKeySet.insert(stationID)
@@ -144,57 +187,48 @@ import AppKit
 
         let url = Self.fileURL(for: stationID)
 
-        // WICHTIG: Ensure security-scoped access is active
-        var needsToStop = false
-        if !Self.isAccessingSecurityScopedResource {
-            // Try to start access using the stored bookmark
-            if let bookmark = Self.cacheDirectoryBookmark {
-                Self.startAccessingCacheDirectory(bookmark: bookmark)
-                needsToStop = true
-            }
+        // RAII Pattern: Start security-scoped access if needed
+        if let bookmark = Self.cacheDirectoryBookmark {
+            Self.startAccessingCacheDirectory(bookmark: bookmark)
         }
 
+        // Always stop in defer to ensure cleanup (RAII pattern)
         defer {
-            if needsToStop {
+            if Self.cacheDirectoryBookmark != nil {
                 Self.stopAccessingCacheDirectory()
             }
         }
 
-        // If we have security-scoped access, we can write directly
-        if Self.isAccessingSecurityScopedResource {
-            do {
-                // First, delete the old file if it exists
-                if FileManager.default.fileExists(atPath: url.path) {
-                    try? FileManager.default.removeItem(at: url)
-                }
-
-                // Write the new file
-                try data.write(to: url, options: [])
-
-                // Verify the file was written
-                if FileManager.default.fileExists(atPath: url.path),
-                   let _ = try? Data(contentsOf: url) {
-                    return true
-                }
-                return false
-            } catch {
-                return false
+        // Perform the write operation
+        do {
+            // First, delete the old file if it exists
+            if FileManager.default.fileExists(atPath: url.path) {
+                try? FileManager.default.removeItem(at: url)
             }
-        } else {
-            // Fallback: Try to write without security-scoped access
-            do {
-                try data.write(to: url, options: .atomic)
+
+            // Write the new file
+            try data.write(to: url, options: [])
+
+            // Verify the file was written
+            if FileManager.default.fileExists(atPath: url.path),
+               let _ = try? Data(contentsOf: url) {
                 return true
-            } catch {
-                return false
             }
+            return false
+        } catch {
+            // Log the error
+            print("❌ Failed to write favicon to \(url.path): \(error.localizedDescription)")
+            return false
         }
     }
 
     /// Triggers an async disk load if the image is not in memory yet.
     /// Call from `.task`/`onAppear` (NOT from inside `body`) together with `imageInMemory(for:)`.
     public func loadCachedImageIfNeededAsync(for stationID: String) async {
-        guard cachedImages[stationID] == nil else { return }
+        guard cachedImages[stationID] == nil else {
+            trackAccess(for: stationID)
+            return
+        }
 
         await Task.detached {
             let url = await Self.fileURL(for: stationID)
@@ -203,6 +237,9 @@ import AppKit
             await MainActor.run {
                 if let image = NSImage(data: data) {
                     self.cachedImages[stationID] = image
+                    self.trackAccess(for: stationID)
+                    self.evictLRUIfNeeded()
+
                     let key = stationID as NSString
                     Self.memoryCache.setObject(image, forKey: key)
                     Self.memoryCacheKeySet.insert(stationID)
@@ -271,10 +308,8 @@ import AppKit
     }
 
     #if os(macOS)
-    /// Start accessing security-scoped resource (macOS only)
+    /// Start accessing security-scoped resource with reference counting (macOS only)
     private static func startAccessingCacheDirectory(bookmark: Data) {
-        guard !isAccessingSecurityScopedResource else { return }
-
         do {
             var isStale = false
             let url = try URL(
@@ -289,34 +324,41 @@ import AppKit
                 return
             }
 
-            if url.startAccessingSecurityScopedResource() {
-                isAccessingSecurityScopedResource = true
+            // If this is the first access, start the security scope
+            if securityScopeAccessCount == 0 {
+                if url.startAccessingSecurityScopedResource() {
+                    securityScopeURL = url
+                    securityScopeAccessCount = 1
+                    print("🔓 Started accessing security-scoped cache directory (count: \(securityScopeAccessCount))")
+                } else {
+                    print("❌ Failed to start accessing security-scoped cache directory")
+                    return
+                }
             } else {
-                print("❌ Failed to start accessing security-scoped cache directory")
+                // Already accessing, just increment reference count
+                securityScopeAccessCount += 1
+                print("🔓 Incremented security scope access count: \(securityScopeAccessCount)")
             }
         } catch {
             print("❌ Error resolving cache bookmark: \(error.localizedDescription)")
         }
     }
 
-    /// Stop accessing security-scoped resource (macOS only)
+    /// Stop accessing security-scoped resource with reference counting (macOS only)
     private static func stopAccessingCacheDirectory() {
-        guard isAccessingSecurityScopedResource else { return }
-        guard let bookmark = cacheDirectoryBookmark else { return }
+        guard securityScopeAccessCount > 0 else {
+            print("⚠️ Attempted to stop security scope access but count is already 0")
+            return
+        }
 
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmark,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
+        securityScopeAccessCount -= 1
+        print("🔒 Decremented security scope access count: \(securityScopeAccessCount)")
+
+        // Only actually stop when count reaches zero
+        if securityScopeAccessCount == 0, let url = securityScopeURL {
             url.stopAccessingSecurityScopedResource()
-            isAccessingSecurityScopedResource = false
+            securityScopeURL = nil
             print("✅ Stopped accessing security-scoped cache directory")
-        } catch {
-            print("❌ Error resolving cache bookmark for stop: \(error.localizedDescription)")
         }
     }
     #endif
@@ -355,11 +397,8 @@ import AppKit
     public func clearMemoryCache() {
         Self.memoryCache.removeAllObjects()
         Self.memoryCacheKeySet.removeAll()
-        #if os(iOS)
         cachedImages.removeAll()
-        #elseif os(macOS)
-        cachedImages.removeAll()
-        #endif
+        accessOrder.removeAll()
     }
     
     public func clearAllCachedImages() {
@@ -435,4 +474,45 @@ import AppKit
     private static var memoryCache = NSCache<NSString, NSImage>()
     #endif
     private static var memoryCacheKeySet = Set<String>()
+
+    // MARK: - Memory Management
+
+    /// Tracks access to an image for LRU eviction
+    private func trackAccess(for stationID: String) {
+        // Remove existing entry to update position
+        accessOrder.removeAll { $0 == stationID }
+        // Add to end (most recently used)
+        accessOrder.append(stationID)
+    }
+
+    /// Evicts least recently used images from published cache if over limit
+    private func evictLRUIfNeeded() {
+        guard cachedImages.count > Self.maxPublishedCacheSize else { return }
+
+        let countToRemove = cachedImages.count - Self.maxPublishedCacheSize
+        let idsToEvict = accessOrder.prefix(countToRemove)
+
+        for id in idsToEvict {
+            cachedImages.removeValue(forKey: id)
+        }
+
+        accessOrder.removeFirst(countToRemove)
+    }
+
+    /// Called on memory warnings to aggressively free memory
+    private func handleMemoryWarning() {
+        // Clear published cache completely
+        cachedImages.removeAll()
+        accessOrder.removeAll()
+
+        // Reduce NSCache to 50% capacity
+        let halfLimit = Self.maxMemoryCacheSize / 2
+        Self.memoryCache.countLimit = halfLimit
+        // Restore full limit after clearing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            Self.memoryCache.countLimit = Self.maxMemoryCacheSize
+        }
+
+        print("⚠️ Memory warning: Cleared favicon cache (published: \(cachedImages.count), NSCache: \(Self.memoryCacheKeySet.count))")
+    }
 }

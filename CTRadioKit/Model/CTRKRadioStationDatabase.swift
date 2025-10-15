@@ -14,7 +14,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
     /// Version 1: Original format (array of stations without version field)
     /// Version 2: Protocol-independent IDs (HTTP/HTTPS normalized)
     /// Version 3: Persistent IDs (stored in JSON, stable across streamURL changes)
-    public static let currentVersion = 3
+    /// Version 4: Homepage health status tracking (homepageHTTP/HTTPS fields added)
+    public static let currentVersion = 4
 
     /// Database format version
     public var version: Int
@@ -87,6 +88,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return "Version 2 (Protocol-independent IDs)"
         case 3:
             return "Version 3 (Persistent IDs)"
+        case 4:
+            return "Version 4 (Homepage health tracking)"
         default:
             return "Version \(version) (Unknown)"
         }
@@ -123,6 +126,42 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             }
 
             // Fallback: return original station (shouldn't happen)
+            return station
+        }
+    }
+
+    /// Migrates stations from V3 to V4 by ensuring homepage health fields exist
+    /// V4 adds homepageHTTP and homepageHTTPS health tracking fields
+    /// - Returns: New stations array with homepage health fields initialized
+    public func migrateToV4() -> [CTRKRadioStation] {
+        guard version == 3 else { return stations }
+
+        // For each station, ensure health.homepageHTTP and health.homepageHTTPS exist
+        // If the JSON doesn't have these fields, they'll be initialized to .unknown by the decoder
+        return stations.map { station in
+            // Encode and re-decode to ensure all fields are properly initialized
+            if let data = try? JSONEncoder().encode(station),
+               var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               var healthJson = json["health"] as? [String: Any] {
+
+                // Add homepage health fields if they don't exist
+                if healthJson["homepageHTTP"] == nil {
+                    healthJson["homepageHTTP"] = "unknown"
+                }
+                if healthJson["homepageHTTPS"] == nil {
+                    healthJson["homepageHTTPS"] = "unknown"
+                }
+
+                json["health"] = healthJson
+
+                // Re-encode and decode
+                if let newData = try? JSONSerialization.data(withJSONObject: json),
+                   let migratedStation = try? JSONDecoder().decode(CTRKRadioStation.self, from: newData) {
+                    return migratedStation
+                }
+            }
+
+            // Fallback: return original station (decoder should handle missing fields)
             return station
         }
     }

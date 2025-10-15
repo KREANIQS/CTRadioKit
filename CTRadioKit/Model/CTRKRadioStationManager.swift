@@ -161,16 +161,47 @@ public final class CTRKRadioStationManager: ObservableObject {
 
     // MARK: - FavIcon Cache Directory Management
 
-    /// Setup favicon cache directory relative to database file (macOS only)
-    /// On other platforms, uses default system cache directory
+    /// Setup favicon cache directory relative to database file
+    /// Supports both bundle-relative caches (read-only) and writable caches
     public func setupFaviconCacheDirectory(for databaseURL: URL) {
         #if os(macOS)
         setupFaviconCacheDirectoryMacOS(for: databaseURL)
         #else
-        // iOS/iPadOS/tvOS: Use default system cache
-        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+        setupFaviconCacheDirectoryIOS(for: databaseURL)
         #endif
     }
+
+    #if !os(macOS)
+    private func setupFaviconCacheDirectoryIOS(for databaseURL: URL) {
+        // Check if database is in app bundle
+        let isInBundle = databaseURL.path.contains(Bundle.main.bundlePath)
+
+        #if DEBUG
+        print("📂 [FavIcon] Database URL: \(databaseURL.path)")
+        print("📂 [FavIcon] Bundle path: \(Bundle.main.bundlePath)")
+        print("📂 [FavIcon] Is in bundle: \(isInBundle)")
+        #endif
+
+        if isInBundle {
+            // For bundle databases, use flat bundle resources structure
+            // Favicons are copied flat into the bundle (persistentIDs are unique across databases)
+            if let resourceURL = Bundle.main.resourceURL {
+                CTRKRadioStationFavIconCacheManager.setCacheDirectory(resourceURL, bookmark: nil)
+                #if DEBUG
+                print("✅ [FavIcon] Using flat bundle favicon cache: \(resourceURL.path)")
+                #endif
+                return
+            }
+        }
+
+        // Fallback: Use system cache directory (writable)
+        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+        #if DEBUG
+        let systemCacheDir = CTRKRadioStationFavIconCacheManager.currentCacheDirectoryPath()
+        print("ℹ️ [FavIcon] Using system favicon cache directory: \(systemCacheDir)")
+        #endif
+    }
+    #endif
 
     #if os(macOS)
     private func setupFaviconCacheDirectoryMacOS(for databaseURL: URL) {

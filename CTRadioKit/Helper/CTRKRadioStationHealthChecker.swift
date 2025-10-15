@@ -52,6 +52,7 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
             var updatedStation = station
             await checkStreamHealth(for: &updatedStation)
             await checkFaviconHealth(for: &updatedStation)
+            await checkHomepageHealth(for: &updatedStation)
 
             // Call update callback for batch collection
             onStationUpdated(updatedStation)
@@ -198,6 +199,31 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
         }
     }
 
+    private func checkHomepageHealth(for station: inout CTRKRadioStation) async {
+        let homepageURL = station.homepageURL
+
+        // Test HTTP version
+        if let httpURL = convertToHTTP(homepageURL) {
+            station.health.homepageHTTP = await testHomepageURL(httpURL)
+        } else {
+            // If URL conversion fails, mark as invalid
+            station.health.homepageHTTP = .invalid
+        }
+
+        // Check if task was cancelled before testing HTTPS
+        if Task.isCancelled {
+            return
+        }
+
+        // Test HTTPS version
+        if let httpsURL = convertToHTTPS(homepageURL) {
+            station.health.homepageHTTPS = await testHomepageURL(httpsURL)
+        } else {
+            // If URL conversion fails, mark as invalid
+            station.health.homepageHTTPS = .invalid
+        }
+    }
+
     private func testFaviconURL(_ urlString: String) async -> CTRKRadioStationFaviconHealthStatus {
         guard let url = URL(string: urlString) else {
             return .failed
@@ -227,6 +253,38 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
             return .failed
         } catch {
             return .failed
+        }
+    }
+
+    private func testHomepageURL(_ urlString: String) async -> CTRKRadioStationStreamHealthStatus {
+        guard let url = URL(string: urlString) else {
+            return .invalid
+        }
+
+        do {
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+            request.httpMethod = "HEAD"
+            request.setValue("PladioManager/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+
+            // Set lower priority to reduce aggressive network logging
+            request.networkServiceType = .background
+
+            let (_, response) = try await urlSession.data(for: request)
+
+            if let httpResponse = response as? HTTPURLResponse {
+                // Check HTTP status code (200-399 are considered valid for web pages)
+                // This includes redirects (3xx) which are common for homepages
+                guard (200...399).contains(httpResponse.statusCode) else {
+                    return .invalid
+                }
+
+                return .valid
+            }
+
+            return .invalid
+        } catch {
+            return .invalid
         }
     }
 
