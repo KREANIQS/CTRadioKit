@@ -24,12 +24,16 @@ import Foundation
         loadFavorites()
         favoriteIDs = Set(favorites.map { $0.id })
 
+        // Use block-based observer with explicit main queue to ensure @MainActor isolation
         NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(iCloudDidChange),
-            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-            object: nil
-        )
+            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.iCloudDidChange()
+            }
+        }
 
         iCloudStore.synchronize()
 
@@ -256,7 +260,7 @@ import Foundation
         }
     }
 
-    @objc private func iCloudDidChange(_ notification: Notification) {
+    private func iCloudDidChange() {
 #if DEBUG
         CTSwiftLogger.shared.info("🔄 [iCloud] Detected external change – merging favorites")
 #endif
