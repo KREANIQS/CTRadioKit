@@ -21,6 +21,7 @@ import Foundation
     private var stationTimestamps: [String: Date] = [:]  // StationID -> Last modified date
 
     public init() {
+        // Load local favorites first
         loadFavorites()
         favoriteIDs = Set(favorites.map { $0.id })
 
@@ -35,7 +36,17 @@ import Foundation
             }
         }
 
-        iCloudStore.synchronize()
+        // Trigger initial sync from iCloud
+        let syncSuccess = iCloudStore.synchronize()
+#if DEBUG
+        CTSwiftLogger.shared.info(syncSuccess ? "✅ [iCloud] Initial sync triggered" : "⚠️ [iCloud] Initial sync may have failed")
+#endif
+
+        // Perform initial merge after a short delay to allow iCloud to fetch data
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
+            self?.performInitialMerge()
+        }
 
         CTRKRadioStationFavIconCacheManager.shared.$cachedImages
             .receive(on: DispatchQueue.main)
@@ -163,10 +174,12 @@ import Foundation
     }
 
     private func loadFavorites() {
-        // Load timestamps
+        // Load timestamps (reset to empty if not found)
         if let timestampsData = iCloudStore.data(forKey: timestampsKey),
            let timestamps = try? JSONDecoder().decode([String: Date].self, from: timestampsData) {
             stationTimestamps = timestamps
+        } else {
+            stationTimestamps = [:]
         }
 
         // Load favorites
@@ -260,19 +273,27 @@ import Foundation
         }
     }
 
+    private func performInitialMerge() {
+#if DEBUG
+        CTSwiftLogger.shared.info("🔄 [iCloud] Performing initial merge with iCloud data")
+#endif
+        performMerge(isInitial: true)
+    }
+
     private func iCloudDidChange() {
 #if DEBUG
         CTSwiftLogger.shared.info("🔄 [iCloud] Detected external change – merging favorites")
 #endif
+        performMerge(isInitial: false)
+    }
 
+    private func performMerge(isInitial: Bool) {
         // Save current local state
         let localFavorites = favorites
         let localTimestamps = stationTimestamps
 
-        // Load iCloud state
-        loadFavorites()
-        let iCloudFavorites = favorites
-        let iCloudTimestamps = stationTimestamps
+        // Load iCloud state without modifying instance variables
+        let (iCloudFavorites, iCloudTimestamps) = loadFavoritesFromiCloud()
 
         // Merge with conflict resolution
         let mergedFavorites = mergeFavorites(
@@ -282,15 +303,74 @@ import Foundation
             iCloudTimestamps: iCloudTimestamps
         )
 
-        favorites = mergedFavorites
-        favoriteIDs = Set(mergedFavorites.map { $0.id })
+        // Check if there are actual changes (compare IDs and count)
+        let localIDs = Set(favorites.map { $0.id })
+        let mergedIDs = Set(mergedFavorites.map { $0.id })
+        let hasChanges = localIDs != mergedIDs || favorites.count != mergedFavorites.count
 
-        // Persist merged result back to iCloud
-        saveFavorites()
+        favorites = mergedFavorites
+        favoriteIDs = mergedIDs
+
+        // Always save on initial merge, or when changes are detected
+        if hasChanges || isInitial {
+            saveFavorites()
+#if DEBUG
+            CTSwiftLogger.shared.info("💾 [iCloud] Saved merged favorites back to iCloud")
+#endif
+        }
+
+        // Notify observers if there are changes (UI needs to update)
+        if hasChanges {
+            NotificationCenter.default.post(name: .favoritesDidChange, object: nil)
+#if DEBUG
+            CTSwiftLogger.shared.info("📢 [iCloud] Notified observers about favorite changes")
+#endif
+        }
 
 #if DEBUG
-        CTSwiftLogger.shared.info("✅ [iCloud] Merged to \(favorites.count) favorite(s)")
+        CTSwiftLogger.shared.info("✅ [iCloud] Merged to \(favorites.count) favorite(s)\(hasChanges ? " (changes detected)" : " (no changes)")")
 #endif
+    }
+
+    /// Loads favorites from iCloud without modifying instance variables
+    private func loadFavoritesFromiCloud() -> ([CTRKRadioStation], [String: Date]) {
+        var loadedTimestamps: [String: Date] = [:]
+        var loadedFavorites: [CTRKRadioStation] = []
+
+        // Load timestamps
+        if let timestampsData = iCloudStore.data(forKey: timestampsKey),
+           let timestamps = try? JSONDecoder().decode([String: Date].self, from: timestampsData) {
+            loadedTimestamps = timestamps
+        }
+
+        // Load favorites
+        guard let data = iCloudStore.data(forKey: key) else {
+#if DEBUG
+            CTSwiftLogger.shared.info("📭 [iCloud] No data found for key: \(key) during merge")
+#endif
+            return ([], [:])
+        }
+
+        do {
+            let decoded = try JSONDecoder().decode([CTRKRadioStation].self, from: data)
+            loadedFavorites = decoded
+
+            // Initialize timestamps for stations that don't have one
+            let now = Date()
+            for station in loadedFavorites where loadedTimestamps[station.id] == nil {
+                loadedTimestamps[station.id] = now
+            }
+
+#if DEBUG
+            CTSwiftLogger.shared.info("✅ [iCloud] Loaded \(loadedFavorites.count) favorite(s) from iCloud for merge")
+#endif
+        } catch {
+#if DEBUG
+            CTSwiftLogger.shared.info("❌ [iCloud] Failed to decode favorites during merge: \(error)")
+#endif
+        }
+
+        return (loadedFavorites, loadedTimestamps)
     }
 
     /// Merges local and iCloud favorites with conflict resolution
@@ -380,5 +460,6 @@ import Foundation
 }
 
 extension Notification.Name {
-    public static let favoriteDidChange = Notification.Name("favoriteDidChange")
+    public static let favoriteDidChange = Notification.Name("favoriteDidChange")  // Single station change (with userInfo)
+    public static let favoritesDidChange = Notification.Name("favoritesDidChange")  // List-level change
 }
