@@ -473,5 +473,5 @@ import Foundation
 
 extension Notification.Name {
     public static let favoriteDidChange = Notification.Name("favoriteDidChange")  // Single station change (with userInfo)
-    public static let favoritesDidChange = Notification.Name("favoritesDidChange")  // List-level change
+    // Note: favoritesDidChange is now defined in CTRKRadioStationUserPropertiesManager.swift
 }
