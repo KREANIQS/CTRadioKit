@@ -81,6 +81,73 @@ public final class CTRKRadioStationManager: ObservableObject {
         try data.write(to: url)
     }
 
+    // MARK: - Package Loading (.radiopack files)
+
+    /// Loads a bundled .radiopack file and extracts database + favicon cache
+    /// - Parameters:
+    ///   - packageName: Name of the .radiopack file (without extension)
+    ///   - forceReExtract: If true, re-extracts even if already extracted
+    ///   - progressHandler: Optional progress callback (0.0 to 1.0)
+    /// - Returns: Package info with paths to extracted files
+    @discardableResult
+    public func loadBundledPackage(
+        named packageName: String,
+        forceReExtract: Bool = false,
+        progressHandler: ((Double, String) -> Void)? = nil
+    ) async throws -> CTRKRadioStationDatabasePackager.PackageInfo {
+
+        // Load and extract package
+        let packageInfo = try await CTRKRadioStationDatabasePackager.loadBundledPackage(
+            named: packageName,
+            forceReExtract: forceReExtract,
+            progressHandler: progressHandler
+        )
+
+        // Load database from extracted location
+        try loadStations(from: packageInfo.databaseURL)
+
+        // Update favicon cache to use extracted favicons
+        faviconCache.updateCachePath(packageInfo.faviconCacheURL)
+
+        // Store last opened URL
+        lastOpenedURL = packageInfo.databaseURL
+
+        return packageInfo
+    }
+
+    // MARK: - Package Export (.radiopack creation)
+
+    /// Creates a .radiopack file from current database and favicon cache
+    /// Useful for PladioManager to export databases for Pladio app
+    /// - Parameters:
+    ///   - outputURL: Where to save the .radiopack file
+    ///   - version: Version string for the package
+    ///   - progressHandler: Optional progress callback (0.0 to 1.0)
+    public func createPackage(
+        at outputURL: URL,
+        version: String,
+        progressHandler: ((Double, String) -> Void)? = nil
+    ) async throws {
+
+        guard let databaseURL = lastOpenedURL else {
+            throw NSError(
+                domain: "CTRKRadioStationManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No database loaded. Load a database first."]
+            )
+        }
+
+        let faviconCacheURL = faviconCache.currentCachePath
+
+        try await CTRKRadioStationDatabasePackager.createPackage(
+            databaseURL: databaseURL,
+            faviconCacheURL: faviconCacheURL,
+            outputURL: outputURL,
+            version: version,
+            progressHandler: progressHandler
+        )
+    }
+
     // MARK: - Interner Indexaufbau
 
     private func indexStations(_ stations: [CTRKRadioStation]) {

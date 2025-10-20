@@ -515,4 +515,23 @@ import AppKit
 
         print("⚠️ Memory warning: Cleared favicon cache (published: \(cachedImages.count), NSCache: \(Self.memoryCacheKeySet.count))")
     }
+
+    // MARK: - Package Support
+
+    /// Updates the favicon cache path to a new location (e.g., extracted from .radiopack)
+    /// - Parameter url: New cache directory URL
+    public func updateCachePath(_ url: URL) {
+        Self.setCacheDirectory(url, bookmark: nil)
+    }
+
+    /// Returns the current cache path being used
+    public var currentCachePath: URL {
+        if let customDir = Self.customCacheDirectory {
+            return customDir
+        }
+
+        // Return default system cache path
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return cacheDir.appendingPathComponent("FavIcons")
+    }
 }

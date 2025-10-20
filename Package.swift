@@ -16,6 +16,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/KREANIQS/CTSwiftLogger", branch: "main"),
+        .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.19"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -23,9 +24,8 @@ let package = Package(
         .target(
             name: "CTRadioKit",
             dependencies: [
-                .product(name: "CTSwiftLogger", package: "CTSwiftLogger")
-                // Alternativ (wenn Produkt- und Target-Namen exakt "CTSwiftLogger" sind):
-                // "CTSwiftLogger"
+                .product(name: "CTSwiftLogger", package: "CTSwiftLogger"),
+                .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ],
             path: "CTRadioKit",
             resources: []

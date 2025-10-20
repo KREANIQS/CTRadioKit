@@ -15,7 +15,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
     /// Version 2: Protocol-independent IDs (HTTP/HTTPS normalized)
     /// Version 3: Persistent IDs (stored in JSON, stable across streamURL changes)
     /// Version 4: Homepage health status tracking (homepageHTTP/HTTPS fields added)
-    public static let currentVersion = 4
+    /// Version 5: Database metadata with name and description
+    public static let currentVersion = 5
 
     /// Database format version
     public var version: Int
@@ -90,6 +91,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return "Version 3 (Persistent IDs)"
         case 4:
             return "Version 4 (Homepage health tracking)"
+        case 5:
+            return "Version 5 (Database metadata)"
         default:
             return "Version \(version) (Unknown)"
         }
@@ -165,6 +168,40 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return station
         }
     }
+
+    /// Migrates from V4 to V5 by ensuring metadata with name and description exists
+    /// V5 adds structured metadata fields to the database
+    /// - Returns: Database with proper metadata structure
+    public func migrateToV5() -> CTRKRadioStationDatabase {
+        guard version == 4 else { return self }
+
+        // Ensure metadata exists with name and description fields
+        let updatedMetadata: DatabaseMetadata
+        if let existingMetadata = metadata {
+            // Preserve existing metadata, ensure all fields are accessible
+            updatedMetadata = DatabaseMetadata(
+                createdAt: existingMetadata.createdAt,
+                lastModified: Date(),
+                name: existingMetadata.name,
+                description: existingMetadata.description,
+                customFields: existingMetadata.customFields
+            )
+        } else {
+            // Create new metadata
+            updatedMetadata = DatabaseMetadata(
+                createdAt: nil,
+                lastModified: Date(),
+                name: nil,
+                description: nil
+            )
+        }
+
+        return CTRKRadioStationDatabase(
+            stations: stations,
+            version: 5,
+            metadata: updatedMetadata
+        )
+    }
 }
 
 /// Metadata about the database (for future extensions)
@@ -175,6 +212,9 @@ public struct DatabaseMetadata: Codable, Sendable {
     /// When the database was last modified
     public var lastModified: Date?
 
+    /// Name of the database
+    public var name: String?
+
     /// Optional description of the database
     public var description: String?
 
@@ -183,10 +223,12 @@ public struct DatabaseMetadata: Codable, Sendable {
 
     public init(createdAt: Date? = nil,
                 lastModified: Date? = nil,
+                name: String? = nil,
                 description: String? = nil,
                 customFields: [String: String]? = nil) {
         self.createdAt = createdAt
         self.lastModified = lastModified
+        self.name = name
         self.description = description
         self.customFields = customFields
     }
