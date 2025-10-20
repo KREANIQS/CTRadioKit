@@ -26,6 +26,12 @@ public final class CTRKRadioStationManager: ObservableObject {
         }
     }
 
+    /// Database metadata (name, description, version info)
+    @Published public var databaseMetadata: DatabaseMetadata?
+
+    /// Database format version (e.g., 5 for Version 5)
+    @Published public var databaseVersion: Int = 0
+
     private var stationByID: [String: CTRKRadioStation] = [:]
     private var stationByCountry: [String: [CTRKRadioStation]] = [:]
     private var stationByTag: [String: [CTRKRadioStation]] = [:]
@@ -55,6 +61,8 @@ public final class CTRKRadioStationManager: ObservableObject {
             // Use the database loader which supports both formats
             let database = try CTRKRadioStationDatabaseLoader.load(from: data)
             self.allStations = database.stations
+            self.databaseMetadata = database.metadata
+            self.databaseVersion = database.version
             self.indexStations(database.stations)
         } catch {
             if let json = try? JSONSerialization.jsonObject(with: data, options: []),
