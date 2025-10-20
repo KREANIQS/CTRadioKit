@@ -60,10 +60,27 @@ public final class CTRKRadioStationManager: ObservableObject {
         do {
             // Use the database loader which supports both formats
             let database = try CTRKRadioStationDatabaseLoader.load(from: data)
-            self.allStations = database.stations
+
+            // Filter out duplicate station IDs (keep first occurrence)
+            var seenIDs = Set<String>()
+            let uniqueStations = database.stations.filter { station in
+                if seenIDs.contains(station.id) {
+                    print("⚠️ Duplicate station ID found and ignored: \(station.id) - \(station.name)")
+                    return false
+                }
+                seenIDs.insert(station.id)
+                return true
+            }
+
+            let duplicateCount = database.stations.count - uniqueStations.count
+            if duplicateCount > 0 {
+                print("⚠️ Filtered out \(duplicateCount) duplicate station(s) from database")
+            }
+
+            self.allStations = uniqueStations
             self.databaseMetadata = database.metadata
             self.databaseVersion = database.version
-            self.indexStations(database.stations)
+            self.indexStations(uniqueStations)
         } catch {
             if let json = try? JSONSerialization.jsonObject(with: data, options: []),
                let first = (json as? [Any])?.first {
