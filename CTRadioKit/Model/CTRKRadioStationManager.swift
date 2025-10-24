@@ -39,7 +39,7 @@ public final class CTRKRadioStationManager: ObservableObject {
     // MARK: - Abhängige Manager
     public let favorites: CTRKFavoriteRadioStationsManager
     public let recents: CTRKRecentRadioStationsManager
-    public let faviconCache: CTRKRadioStationFavIconCacheManager
+    public let faviconCache: CTRKRadioStationFavIconManager
     
     public var lastOpenedURL: URL?
 
@@ -49,7 +49,7 @@ public final class CTRKRadioStationManager: ObservableObject {
     private init() {
         self.favorites = CTRKFavoriteRadioStationsManager()
         self.recents = CTRKRecentRadioStationsManager()
-        self.faviconCache = CTRKRadioStationFavIconCacheManager()
+        self.faviconCache = CTRKRadioStationFavIconManager()
     }
 
     // MARK: - Laden & Speichern
@@ -278,7 +278,7 @@ public final class CTRKRadioStationManager: ObservableObject {
             // For bundle databases, use flat bundle resources structure
             // Favicons are copied flat into the bundle (persistentIDs are unique across databases)
             if let resourceURL = Bundle.main.resourceURL {
-                CTRKRadioStationFavIconCacheManager.setCacheDirectory(resourceURL, bookmark: nil)
+                CTRKRadioStationFavIconManager.setCacheDirectory(resourceURL, bookmark: nil)
                 #if DEBUG
                 print("✅ [FavIcon] Using flat bundle favicon cache: \(resourceURL.path)")
                 #endif
@@ -287,9 +287,9 @@ public final class CTRKRadioStationManager: ObservableObject {
         }
 
         // Fallback: Use system cache directory (writable)
-        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+        CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
         #if DEBUG
-        let systemCacheDir = CTRKRadioStationFavIconCacheManager.currentCacheDirectoryPath()
+        let systemCacheDir = CTRKRadioStationFavIconManager.currentCacheDirectoryPath()
         print("ℹ️ [FavIcon] Using system favicon cache directory: \(systemCacheDir)")
         #endif
     }
@@ -310,14 +310,14 @@ public final class CTRKRadioStationManager: ObservableObject {
             // For bundle databases, use flat bundle resources structure (same as iOS)
             // Favicons are copied flat into the bundle (persistentIDs are unique across databases)
             if let resourceURL = Bundle.main.resourceURL {
-                CTRKRadioStationFavIconCacheManager.setCacheDirectory(resourceURL, bookmark: nil)
+                CTRKRadioStationFavIconManager.setCacheDirectory(resourceURL, bookmark: nil)
                 #if DEBUG
                 print("✅ [FavIcon] Using flat bundle favicon cache: \(resourceURL.path)")
                 #endif
                 return
             } else {
                 // Fallback to system cache
-                CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
                 #if DEBUG
                 print("⚠️ [FavIcon] Could not get bundle resourceURL, using system cache")
                 #endif
@@ -388,17 +388,17 @@ public final class CTRKRadioStationManager: ObservableObject {
                             relativeTo: nil
                         )
                         saveFaviconCacheBookmark(bookmark, for: databaseURL)
-                        CTRKRadioStationFavIconCacheManager.setCacheDirectory(selectedDir, bookmark: bookmark)
+                        CTRKRadioStationFavIconManager.setCacheDirectory(selectedDir, bookmark: bookmark)
                     } catch {
                         print("⚠️ Failed to create bookmark: \(error.localizedDescription)")
-                        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                        CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
                     }
                 }
             } else {
-                CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
             }
         } else {
-            CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+            CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
         }
     }
 
@@ -441,18 +441,18 @@ public final class CTRKRadioStationManager: ObservableObject {
                             relativeTo: nil
                         )
                         saveFaviconCacheBookmark(bookmark, for: databaseURL)
-                        CTRKRadioStationFavIconCacheManager.setCacheDirectory(finalCacheURL, bookmark: bookmark)
+                        CTRKRadioStationFavIconManager.setCacheDirectory(finalCacheURL, bookmark: bookmark)
                         print("✅ Favicon cache setup complete: \(finalCacheURL.lastPathComponent)")
                     } catch {
                         print("⚠️ Failed to create cache directory or bookmark: \(error.localizedDescription)")
-                        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                        CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
                     }
                 }
             } else {
-                CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+                CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
             }
         } else {
-            CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+            CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
         }
     }
 
@@ -491,7 +491,7 @@ public final class CTRKRadioStationManager: ObservableObject {
             }
 
             // Pass bookmark to FavIconCacheManager for security-scoped access
-            CTRKRadioStationFavIconCacheManager.setCacheDirectory(url, bookmark: bookmark)
+            CTRKRadioStationFavIconManager.setCacheDirectory(url, bookmark: bookmark)
             return true
         } catch {
             print("❌ Error resolving cache bookmark: \(error.localizedDescription)")
@@ -511,7 +511,7 @@ public final class CTRKRadioStationManager: ObservableObject {
 
     /// Reset favicon cache to system directory
     public func resetFaviconCacheToSystemDirectory() {
-        CTRKRadioStationFavIconCacheManager.resetToSystemCacheDirectory()
+        CTRKRadioStationFavIconManager.resetToSystemCacheDirectory()
     }
 
     // MARK: - Database Migration (Version 1 → Version 2)
@@ -615,8 +615,8 @@ public final class CTRKRadioStationManager: ObservableObject {
         print("📁 Migrating favicon cache files...")
 
         for (index, (oldID, newID)) in idMapping.enumerated() {
-            let oldFileName = CTRKRadioStationFavIconCacheManager.sanitizedFileName(for: oldID)
-            let newFileName = CTRKRadioStationFavIconCacheManager.sanitizedFileName(for: newID)
+            let oldFileName = CTRKRadioStationFavIconManager.sanitizedFileName(for: oldID)
+            let newFileName = CTRKRadioStationFavIconManager.sanitizedFileName(for: newID)
 
             let oldFileURL = cacheDirectory.appendingPathComponent("\(oldFileName).png")
             let newFileURL = cacheDirectory.appendingPathComponent("\(newFileName).png")

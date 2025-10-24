@@ -1,6 +1,6 @@
 //
-//  CTRKRadioStationFavIconCacheManager.swift
-//  Pladio
+//  CTRKRadioStationFavIconManager.swift
+//  CTRadioKit
 //
 //  Created by Patrick @ DIEZIs on 28.08.2025.
 //
@@ -12,8 +12,8 @@ import UIKit
 import AppKit
 #endif
 
-@MainActor public final class CTRKRadioStationFavIconCacheManager: ObservableObject {
-    public static let shared = CTRKRadioStationFavIconCacheManager()
+@MainActor public final class CTRKRadioStationFavIconManager: ObservableObject {
+    public static let shared = CTRKRadioStationFavIconManager()
 
     // Memory management configuration
     private static let maxPublishedCacheSize = 100  // Limit published dictionary to 100 images
@@ -249,6 +249,163 @@ import AppKit
     }
     #endif
 
+    // MARK: - Favicon Loading with Download Support
+
+    /// Loads a favicon for a station, downloading from URL if not in cache.
+    /// This method handles the complete lifecycle:
+    /// 1. Check memory cache
+    /// 2. Check disk cache
+    /// 3. Download from faviconURL if needed
+    /// 4. Process image (make square with aspect-fit, extend not crop)
+    /// 5. Save to cache
+    ///
+    /// - Parameters:
+    ///   - stationID: The unique station identifier
+    ///   - faviconURL: The URL to download the favicon from if not cached
+    ///   - targetSize: Target size for the square favicon (default: 180)
+    /// - Returns: True if favicon is available after this call, false otherwise
+    @discardableResult
+    public func loadFavicon(for stationID: String, from faviconURL: String, targetSize: CGFloat = 180) async -> Bool {
+        // Step 1: Check if already in memory
+        if imageInMemory(for: stationID) != nil {
+            trackAccess(for: stationID)
+            return true
+        }
+
+        // Step 2: Try loading from disk cache
+        await loadCachedImageIfNeededAsync(for: stationID)
+        if imageInMemory(for: stationID) != nil {
+            return true
+        }
+
+        // Step 3: Download from URL if not in cache
+        guard let url = URL(string: faviconURL),
+              faviconURL.starts(with: "http") else {
+            return false
+        }
+
+        return await downloadAndCacheFavicon(stationID: stationID, url: url, targetSize: targetSize)
+    }
+
+    /// Downloads a favicon from a URL and caches it
+    private func downloadAndCacheFavicon(stationID: String, url: URL, targetSize: CGFloat) async -> Bool {
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return false
+            }
+
+            #if os(iOS)
+            guard let downloadedImage = UIImage(data: data) else {
+                return false
+            }
+
+            // Process: Make square with aspect-fit (extend, not crop)
+            let processedImage = makeSquareExtended(image: downloadedImage, targetSize: targetSize)
+
+            // Save to cache (both memory and disk)
+            await MainActor.run {
+                saveImage(processedImage, for: stationID)
+            }
+
+            return true
+
+            #elseif os(macOS)
+            guard let downloadedImage = NSImage(data: data) else {
+                return false
+            }
+
+            // Process: Make square with aspect-fit (extend, not crop)
+            let processedImage = makeSquareExtended(image: downloadedImage, targetSize: targetSize)
+
+            // Save to cache (both memory and disk)
+            await MainActor.run {
+                let _ = saveImage(processedImage, for: stationID)
+            }
+
+            return true
+            #endif
+
+        } catch {
+            print("❌ Failed to download favicon from \(url.absoluteString): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    #if os(iOS)
+    /// Makes an image square by extending (not cropping) with transparent background.
+    /// Preserves aspect ratio and centers the original image.
+    private func makeSquareExtended(image: UIImage, targetSize: CGFloat) -> UIImage {
+        let imageSize = image.size
+
+        // If already square and correct size, return as-is
+        if imageSize.width == imageSize.height && imageSize.width == targetSize {
+            return image
+        }
+
+        // Calculate dimensions to fit original image into square
+        let canvasSize = CGSize(width: targetSize, height: targetSize)
+        let widthRatio = targetSize / imageSize.width
+        let heightRatio = targetSize / imageSize.height
+        let scale = min(widthRatio, heightRatio)
+
+        let scaledWidth = imageSize.width * scale
+        let scaledHeight = imageSize.height * scale
+
+        // Center the image in the square canvas
+        let x = (targetSize - scaledWidth) / 2
+        let y = (targetSize - scaledHeight) / 2
+        let drawRect = CGRect(x: x, y: y, width: scaledWidth, height: scaledHeight)
+
+        // Create square image with transparent background
+        UIGraphicsBeginImageContextWithOptions(canvasSize, false, 0.0)
+        defer { UIGraphicsEndImageContext() }
+
+        image.draw(in: drawRect)
+        return UIGraphicsGetImageFromCurrentImageContext() ?? image
+    }
+
+    #elseif os(macOS)
+    /// Makes an image square by extending (not cropping) with transparent background.
+    /// Preserves aspect ratio and centers the original image.
+    private func makeSquareExtended(image: NSImage, targetSize: CGFloat) -> NSImage {
+        let imageSize = image.size
+
+        // If already square and correct size, return as-is
+        if imageSize.width == imageSize.height && imageSize.width == targetSize {
+            return image
+        }
+
+        // Calculate dimensions to fit original image into square
+        let canvasSize = NSSize(width: targetSize, height: targetSize)
+        let widthRatio = targetSize / imageSize.width
+        let heightRatio = targetSize / imageSize.height
+        let scale = min(widthRatio, heightRatio)
+
+        let scaledWidth = imageSize.width * scale
+        let scaledHeight = imageSize.height * scale
+
+        // Center the image in the square canvas
+        let x = (targetSize - scaledWidth) / 2
+        let y = (targetSize - scaledHeight) / 2
+        let drawRect = NSRect(x: x, y: y, width: scaledWidth, height: scaledHeight)
+
+        // Create square image with transparent background
+        let target = NSImage(size: canvasSize)
+        target.lockFocus()
+        defer { target.unlockFocus() }
+
+        image.draw(in: drawRect,
+                   from: NSRect(origin: .zero, size: imageSize),
+                   operation: .sourceOver,
+                   fraction: 1.0)
+
+        return target
+    }
+    #endif
+
     /// Number of images in the published SwiftUI-reactive dictionary
     public func publishedCacheCount() -> Int {
         cachedImages.count
@@ -444,24 +601,54 @@ import AppKit
     #endif
 
     #if os(iOS)
-    /// Hilfsmethode, um ein Bild quadratisch einzupassen (iOS).
+    /// Hilfsmethode, um ein Bild quadratisch einzupassen mit Aspect-Ratio-Erhaltung (iOS).
     private func squareFit(image: UIImage, canvas: CGFloat) -> UIImage {
-        let size = CGSize(width: canvas, height: canvas)
-        UIGraphicsBeginImageContextWithOptions(size, false, 0.0)
-        image.draw(in: CGRect(origin: .zero, size: size))
+        let canvasSize = CGSize(width: canvas, height: canvas)
+        let imageSize = image.size
+
+        // Calculate aspect-fit dimensions
+        let widthRatio = canvas / imageSize.width
+        let heightRatio = canvas / imageSize.height
+        let scale = min(widthRatio, heightRatio)
+
+        let scaledWidth = imageSize.width * scale
+        let scaledHeight = imageSize.height * scale
+
+        // Center the image in the canvas
+        let x = (canvas - scaledWidth) / 2
+        let y = (canvas - scaledHeight) / 2
+        let drawRect = CGRect(x: x, y: y, width: scaledWidth, height: scaledHeight)
+
+        UIGraphicsBeginImageContextWithOptions(canvasSize, false, 0.0)
+        image.draw(in: drawRect)
         let newImage = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
         return newImage ?? image
     }
     #elseif os(macOS)
-    /// Hilfsmethode, um ein Bild quadratisch einzupassen (macOS).
+    /// Hilfsmethode, um ein Bild quadratisch einzupassen mit Aspect-Ratio-Erhaltung (macOS).
     private func squareFit(image: NSImage, canvas: CGFloat) -> NSImage {
-        let size = NSSize(width: canvas, height: canvas)
-        let target = NSImage(size: size)
+        let canvasSize = NSSize(width: canvas, height: canvas)
+        let imageSize = image.size
+
+        // Calculate aspect-fit dimensions
+        let widthRatio = canvas / imageSize.width
+        let heightRatio = canvas / imageSize.height
+        let scale = min(widthRatio, heightRatio)
+
+        let scaledWidth = imageSize.width * scale
+        let scaledHeight = imageSize.height * scale
+
+        // Center the image in the canvas
+        let x = (canvas - scaledWidth) / 2
+        let y = (canvas - scaledHeight) / 2
+        let drawRect = NSRect(x: x, y: y, width: scaledWidth, height: scaledHeight)
+
+        let target = NSImage(size: canvasSize)
         target.lockFocus()
         defer { target.unlockFocus() }
-        image.draw(in: NSRect(origin: .zero, size: size),
-                   from: NSRect(origin: .zero, size: image.size),
+        image.draw(in: drawRect,
+                   from: NSRect(origin: .zero, size: imageSize),
                    operation: .sourceOver,
                    fraction: 1.0)
         return target
