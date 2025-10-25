@@ -16,7 +16,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
     /// Version 3: Persistent IDs (stored in JSON, stable across streamURL changes)
     /// Version 4: Homepage health status tracking (homepageHTTP/HTTPS fields added)
     /// Version 5: Database metadata with name and description
-    public static let currentVersion = 5
+    /// Version 6: Removed lastLocationEnrichmentCheck (only healthLastCheck remains)
+    public static let currentVersion = 6
 
     /// Database format version
     public var version: Int
@@ -93,6 +94,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return "Version 4 (Homepage health tracking)"
         case 5:
             return "Version 5 (Database metadata)"
+        case 6:
+            return "Version 6 (Removed lastLocationEnrichmentCheck)"
         default:
             return "Version \(version) (Unknown)"
         }
@@ -200,6 +203,40 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             stations: stations,
             version: 5,
             metadata: updatedMetadata
+        )
+    }
+
+    /// Migrates from V5 to V6 by removing lastLocationEnrichmentCheck field
+    /// V6 removes the lastLocationEnrichmentCheck property (only healthLastCheck remains)
+    /// - Returns: Database with cleaned station data
+    public func migrateToV6() -> CTRKRadioStationDatabase {
+        guard version == 5 else { return self }
+
+        // Simply re-encode and decode stations to remove the old field
+        // The decoder will ignore lastLocationEnrichmentCheck if it exists in old JSON
+        let migratedStations = stations.compactMap { station -> CTRKRadioStation? in
+            // Encode and re-decode to ensure old fields are dropped
+            if let data = try? JSONEncoder().encode(station),
+               var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+
+                // Remove the old field if it exists
+                json.removeValue(forKey: "lastLocationEnrichmentCheck")
+
+                // Re-encode and decode
+                if let newData = try? JSONSerialization.data(withJSONObject: json),
+                   let cleanedStation = try? JSONDecoder().decode(CTRKRadioStation.self, from: newData) {
+                    return cleanedStation
+                }
+            }
+
+            // Fallback: return original station (decoder will handle missing fields)
+            return station
+        }
+
+        return CTRKRadioStationDatabase(
+            stations: migratedStations,
+            version: 6,
+            metadata: metadata
         )
     }
 }
