@@ -14,22 +14,19 @@ public struct CTRKRadioStationHealth: Codable, Hashable, Sendable {
     public var faviconHTTPS: CTRKRadioStationFaviconHealthStatus
     public var homepageHTTP: CTRKRadioStationStreamHealthStatus
     public var homepageHTTPS: CTRKRadioStationStreamHealthStatus
-    public var lastCheck: Date?
 
     public init(streamHTTP: CTRKRadioStationStreamHealthStatus = .unknown,
          streamHTTPS: CTRKRadioStationStreamHealthStatus = .unknown,
          faviconHTTP: CTRKRadioStationFaviconHealthStatus = .unknown,
          faviconHTTPS: CTRKRadioStationFaviconHealthStatus = .unknown,
          homepageHTTP: CTRKRadioStationStreamHealthStatus = .unknown,
-         homepageHTTPS: CTRKRadioStationStreamHealthStatus = .unknown,
-         lastCheck: Date? = nil) {
+         homepageHTTPS: CTRKRadioStationStreamHealthStatus = .unknown) {
         self.streamHTTP = streamHTTP
         self.streamHTTPS = streamHTTPS
         self.faviconHTTP = faviconHTTP
         self.faviconHTTPS = faviconHTTPS
         self.homepageHTTP = homepageHTTP
         self.homepageHTTPS = homepageHTTPS
-        self.lastCheck = lastCheck
     }
 
     // Custom decoder to handle missing fields in older database versions
@@ -45,12 +42,11 @@ public struct CTRKRadioStationHealth: Codable, Hashable, Sendable {
         self.homepageHTTP = (try? container.decode(CTRKRadioStationStreamHealthStatus.self, forKey: .homepageHTTP)) ?? .unknown
         self.homepageHTTPS = (try? container.decode(CTRKRadioStationStreamHealthStatus.self, forKey: .homepageHTTPS)) ?? .unknown
 
-        self.lastCheck = try? container.decodeIfPresent(Date.self, forKey: .lastCheck)
+        // V7: lastCheck removed - ignore if present in old databases
     }
 
     private enum CodingKeys: String, CodingKey {
         case streamHTTP, streamHTTPS, faviconHTTP, faviconHTTPS
         case homepageHTTP, homepageHTTPS
-        case lastCheck
     }
 }

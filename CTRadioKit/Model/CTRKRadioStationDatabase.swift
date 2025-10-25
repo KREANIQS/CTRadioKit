@@ -17,7 +17,9 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
     /// Version 4: Homepage health status tracking (homepageHTTP/HTTPS fields added)
     /// Version 5: Database metadata with name and description
     /// Version 6: Removed lastLocationEnrichmentCheck (only healthLastCheck remains)
-    public static let currentVersion = 6
+    /// Version 7: Added enrichmentStatus tracking, removed health.lastCheck
+    /// Version 8: Added 'planned' state to EnrichmentState for better queue management
+    public static let currentVersion = 8
 
     /// Database format version
     public var version: Int
@@ -96,6 +98,10 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return "Version 5 (Database metadata)"
         case 6:
             return "Version 6 (Removed lastLocationEnrichmentCheck)"
+        case 7:
+            return "Version 7 (Enrichment status tracking)"
+        case 8:
+            return "Version 8 (Planned state for enrichment queue)"
         default:
             return "Version \(version) (Unknown)"
         }
@@ -236,6 +242,54 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
         return CTRKRadioStationDatabase(
             stations: migratedStations,
             version: 6,
+            metadata: metadata
+        )
+    }
+
+    /// Migrates from V6 to V7 by removing health.lastCheck and adding enrichmentStatus
+    /// V7 adds enrichmentStatus tracking and removes health.lastCheck property
+    /// - Returns: Database with enrichmentStatus initialized to .notStarted
+    public func migrateToV7() -> CTRKRadioStationDatabase {
+        guard version == 6 else { return self }
+
+        // Re-encode and decode stations to:
+        // 1. Remove health.lastCheck (decoder ignores it)
+        // 2. Add enrichmentStatus with default .notStarted values
+        let migratedStations = stations.map { station -> CTRKRadioStation in
+            var updatedStation = station
+
+            // Set default enrichment status (all .notStarted)
+            // Decoder already handles this with decodeIfPresent, but explicit is clearer
+            if updatedStation.enrichmentStatus.healthCheck == .notStarted &&
+               updatedStation.enrichmentStatus.location == .notStarted &&
+               updatedStation.enrichmentStatus.genre == .notStarted {
+                // Already has default values from decoder
+                updatedStation.enrichmentStatus = CTRKEnrichmentStatus()
+            }
+
+            return updatedStation
+        }
+
+        return CTRKRadioStationDatabase(
+            stations: migratedStations,
+            version: 7,
+            metadata: metadata
+        )
+    }
+
+    /// Migrates from V7 to V8 by adding support for 'planned' state
+    /// V8 adds the 'planned' EnrichmentState for better queue management
+    /// - Returns: Database with updated enrichmentStatus (no data changes needed)
+    public func migrateToV8() -> CTRKRadioStationDatabase {
+        guard version == 7 else { return self }
+
+        // No actual data migration needed - V7 stations already have enrichmentStatus
+        // The 'planned' state is a new enum case that will be used going forward
+        // All existing states (notStarted, inProgress, completed, failed, skipped) remain valid
+
+        return CTRKRadioStationDatabase(
+            stations: stations,
+            version: 8,
             metadata: metadata
         )
     }

@@ -67,11 +67,33 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
         onProgress(1.0, "Health check completed", "Checked \(totalStations) stations")
     }
 
+    /// Check health for a single station (for parallel processing)
+    /// Returns updated station with health status checked
+    public func checkSingleStation(_ station: CTRKRadioStation) async -> CTRKRadioStation {
+        var updatedStation = station
+
+        // Check all health aspects
+        await checkStreamHealth(for: &updatedStation)
+
+        // Check for cancellation before continuing
+        if Task.isCancelled {
+            return updatedStation
+        }
+
+        await checkFaviconHealth(for: &updatedStation)
+
+        // Check for cancellation before continuing
+        if Task.isCancelled {
+            return updatedStation
+        }
+
+        await checkHomepageHealth(for: &updatedStation)
+
+        return updatedStation
+    }
+
     private func checkStreamHealth(for station: inout CTRKRadioStation) async {
         let streamURL = station.streamURL
-
-        // Always set the timestamp at the beginning to indicate we attempted a check
-        station.health.lastCheck = Date()
 
         // Test HTTP version
         if let httpURL = convertToHTTP(streamURL) {
