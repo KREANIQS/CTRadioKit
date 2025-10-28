@@ -76,7 +76,7 @@ public final class CTRKRadioStationDatabasePackager {
         progressHandler: ((Double, String) -> Void)? = nil
     ) async throws -> PackageInfo {
 
-        progressHandler?(0.0, "Locating package '\(packageName)'...")
+        progressHandler?(0.0, "Locating radio database package...")
 
         // 1. Find package in bundle
         guard let packageURL = Bundle.main.url(forResource: packageName, withExtension: "radiopack") else {
@@ -95,10 +95,13 @@ public final class CTRKRadioStationDatabasePackager {
         let faviconCacheURL = destinationURL.appendingPathComponent("favicons")
 
         if !forceReExtract && fileManager.fileExists(atPath: databaseURL.path) {
-            progressHandler?(1.0, "Package already extracted")
+            progressHandler?(0.5, "Loading cached radio database...")
 
             // Load metadata
             let metadata = try loadMetadata(from: destinationURL)
+
+            progressHandler?(1.0, "Loaded \(metadata.stationCount) stations")
+
             return PackageInfo(
                 databaseURL: databaseURL,
                 faviconCacheURL: faviconCacheURL,
@@ -108,28 +111,30 @@ public final class CTRKRadioStationDatabasePackager {
             )
         }
 
-        progressHandler?(0.1, "Preparing extraction...")
+        progressHandler?(0.1, "Preparing to extract radio database...")
 
-        // 4. Clean destination if forcing re-extract
-        if forceReExtract && fileManager.fileExists(atPath: destinationURL.path) {
+        // 4. Clean destination if forcing re-extract OR if destination exists (to avoid file conflicts during unzip)
+        // Important: We need a clean destination directory for unzipping to avoid conflicts
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            progressHandler?(0.15, "Cleaning previous installation...")
             try fileManager.removeItem(at: destinationURL)
         }
 
         // 5. Create destination directory
         try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
 
-        progressHandler?(0.2, "Extracting package...")
+        progressHandler?(0.2, "Extracting radio database package...")
 
         // 6. Unzip package
         do {
             // ZIPFoundation doesn't support progress callback, so we just unzip
             try fileManager.unzipItem(at: packageURL, to: destinationURL)
-            progressHandler?(0.8, "Extraction complete")
+            progressHandler?(0.7, "Extraction complete")
         } catch {
             throw PackagerError.unzipFailed(error)
         }
 
-        progressHandler?(0.9, "Verifying package structure...")
+        progressHandler?(0.8, "Verifying package contents...")
 
         // 7. Verify package structure
         guard fileManager.fileExists(atPath: databaseURL.path) else {
@@ -140,10 +145,12 @@ public final class CTRKRadioStationDatabasePackager {
             throw PackagerError.invalidPackageStructure("favicons/ directory not found")
         }
 
-        progressHandler?(1.0, "Package loaded successfully")
+        progressHandler?(0.9, "Loading station data...")
 
         // 8. Load metadata
         let metadata = try loadMetadata(from: destinationURL)
+
+        progressHandler?(1.0, "Loaded \(metadata.stationCount) stations")
 
         return PackageInfo(
             databaseURL: databaseURL,
