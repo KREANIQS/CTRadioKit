@@ -2,7 +2,7 @@
 //  CTRKRadioStationDatabase.swift
 //  CTRadioKit
 //
-//  Created by Claude Code on 11.10.2025.
+//  Created by Patrick Diezi / KREANIQS on 11.10.2025.
 //
 
 import Foundation
