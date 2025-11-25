@@ -19,7 +19,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
     /// Version 6: Removed lastLocationEnrichmentCheck (only healthLastCheck remains)
     /// Version 7: Added enrichmentStatus tracking, removed health.lastCheck
     /// Version 8: Added 'planned' state to EnrichmentState for better queue management
-    public static let currentVersion = 8
+    /// Version 9: Added favicon field to EnrichmentStatus for favicon download tracking
+    public static let currentVersion = 9
 
     /// Database format version
     public var version: Int
@@ -102,6 +103,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return "Version 7 (Enrichment status tracking)"
         case 8:
             return "Version 8 (Planned state for enrichment queue)"
+        case 9:
+            return "Version 9 (Favicon download tracking)"
         default:
             return "Version \(version) (Unknown)"
         }
@@ -290,6 +293,47 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
         return CTRKRadioStationDatabase(
             stations: stations,
             version: 8,
+            metadata: metadata
+        )
+    }
+
+    /// Migrates from V8 to V9 by adding favicon field to EnrichmentStatus
+    /// V9 adds favicon download tracking to the enrichment status
+    /// - Returns: Database with updated enrichmentStatus (favicon field initialized to .notStarted)
+    public func migrateToV9() -> CTRKRadioStationDatabase {
+        guard version == 8 else { return self }
+
+        // The favicon field is automatically initialized to .notStarted by the decoder
+        // when decoding existing V8 data, since it's a new field with a default value.
+        // We just need to re-encode/decode to ensure the field is properly set.
+
+        let migratedStations = stations.map { station in
+            // Encode and re-decode to ensure favicon field is initialized
+            if let data = try? JSONEncoder().encode(station),
+               var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               var enrichmentStatus = json["enrichmentStatus"] as? [String: Any] {
+
+                // Add favicon field if it doesn't exist (initialize to notStarted)
+                if enrichmentStatus["favicon"] == nil {
+                    enrichmentStatus["favicon"] = "not_started"
+                }
+
+                json["enrichmentStatus"] = enrichmentStatus
+
+                // Re-encode and decode
+                if let newData = try? JSONSerialization.data(withJSONObject: json),
+                   let migratedStation = try? JSONDecoder().decode(CTRKRadioStation.self, from: newData) {
+                    return migratedStation
+                }
+            }
+
+            // Fallback: return original station (decoder should handle missing field)
+            return station
+        }
+
+        return CTRKRadioStationDatabase(
+            stations: migratedStations,
+            version: 9,
             metadata: metadata
         )
     }

@@ -538,6 +538,50 @@ import AppKit
         return cacheDirectory().appendingPathComponent("\(safeFileName).png")
     }
 
+    /// Checks if a cached image file exists on disk for the given station ID.
+    /// This checks both in-memory cache and disk cache.
+    /// - Parameter stationID: The station ID to check
+    /// - Returns: True if a cached image exists (in memory or on disk)
+    public func hasCachedImage(for stationID: String) -> Bool {
+        // First check in-memory cache
+        #if os(iOS)
+        if cachedImages[stationID] != nil { return true }
+        #elseif os(macOS)
+        if cachedImages[stationID] != nil { return true }
+        #endif
+
+        // Check disk cache
+        let url = Self.fileURL(for: stationID)
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    /// Returns all station IDs that have cached images on disk.
+    /// This is more efficient than calling hasCachedImage() for each station
+    /// when checking many stations at once.
+    /// - Returns: Set of station IDs that have cached images
+    public func allCachedStationIDs() -> Set<String> {
+        var cachedIDs = Set<String>()
+
+        // Add in-memory cached IDs
+        #if os(iOS)
+        cachedIDs.formUnion(cachedImages.keys)
+        #elseif os(macOS)
+        cachedIDs.formUnion(cachedImages.keys)
+        #endif
+
+        // Scan disk cache directory once
+        let cacheDir = Self.cacheDirectory()
+        if let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil) {
+            for file in files where file.pathExtension == "png" {
+                // Extract station ID from filename (remove .png extension)
+                let stationID = file.deletingPathExtension().lastPathComponent
+                cachedIDs.insert(stationID)
+            }
+        }
+
+        return cachedIDs
+    }
+
     public func deleteImage(for stationID: String) {
         let key = stationID as NSString
         #if os(iOS)
@@ -568,14 +612,8 @@ import AppKit
         }
     }
 
-    public func allCachedStationIDs() -> [String] {
-        let directory = Self.cacheDirectory()
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return [] }
-
-        return contents
-            .filter { $0.pathExtension == "png" }
-            .map { $0.deletingPathExtension().lastPathComponent }
-    }
+    // Note: allCachedStationIDs() returning Set<String> is defined above (line 562)
+    // This legacy version returning [String] has been removed to avoid ambiguity
 
     #if os(iOS)
     /// Gibt ein Platzhalter-Image zurück, falls kein FavIcon verfügbar ist (iOS).
