@@ -122,11 +122,29 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
             return .invalid
         }
 
+        // Try HEAD first (faster, less bandwidth)
+        let headResult = await testStreamURLWithMethod(url: url, method: "HEAD")
+
+        // If HEAD fails with 405 (Method Not Allowed) or other client/server errors,
+        // fallback to GET with Range header (many streaming servers don't support HEAD)
+        if headResult == .invalid {
+            return await testStreamURLWithMethod(url: url, method: "GET")
+        }
+
+        return headResult
+    }
+
+    private func testStreamURLWithMethod(url: URL, method: String) async -> CTRKRadioStationStreamHealthStatus {
         do {
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-            request.httpMethod = "HEAD"
+            request.httpMethod = method
             request.setValue("PladioManager/1.0", forHTTPHeaderField: "User-Agent")
             request.setValue("*/*", forHTTPHeaderField: "Accept")
+
+            // For GET requests, only request first 1KB to minimize bandwidth
+            if method == "GET" {
+                request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+            }
 
             // Set lower priority to reduce aggressive network logging
             request.networkServiceType = .background
@@ -135,7 +153,10 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
 
             if let httpResponse = response as? HTTPURLResponse {
                 // Check HTTP status code
-                guard (200...299).contains(httpResponse.statusCode) else {
+                // 200-299: Success
+                // 206: Partial Content (expected for Range requests)
+                let statusCode = httpResponse.statusCode
+                guard (200...299).contains(statusCode) || statusCode == 206 else {
                     return .invalid
                 }
 
@@ -283,11 +304,29 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
             return .invalid
         }
 
+        // Try HEAD first (faster, less bandwidth)
+        let headResult = await testHomepageURLWithMethod(url: url, method: "HEAD")
+
+        // If HEAD fails, fallback to GET with Range header
+        // Some servers don't support HEAD or return different results
+        if headResult == .invalid {
+            return await testHomepageURLWithMethod(url: url, method: "GET")
+        }
+
+        return headResult
+    }
+
+    private func testHomepageURLWithMethod(url: URL, method: String) async -> CTRKRadioStationStreamHealthStatus {
         do {
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-            request.httpMethod = "HEAD"
+            request.httpMethod = method
             request.setValue("PladioManager/1.0", forHTTPHeaderField: "User-Agent")
             request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+
+            // For GET requests, only request first 1KB to minimize bandwidth
+            if method == "GET" {
+                request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+            }
 
             // Set lower priority to reduce aggressive network logging
             request.networkServiceType = .background
@@ -297,7 +336,9 @@ public final class CTRKRadioStationHealthChecker: @unchecked Sendable {
             if let httpResponse = response as? HTTPURLResponse {
                 // Check HTTP status code (200-399 are considered valid for web pages)
                 // This includes redirects (3xx) which are common for homepages
-                guard (200...399).contains(httpResponse.statusCode) else {
+                // 206: Partial Content (expected for Range requests)
+                let statusCode = httpResponse.statusCode
+                guard (200...399).contains(statusCode) || statusCode == 206 else {
                     return .invalid
                 }
 
