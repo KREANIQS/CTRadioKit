@@ -38,8 +38,9 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
     /// IMPORTANT: The ID is protocol-independent (HTTP/HTTPS normalized to HTTPS).
     /// This ensures that changing only the protocol doesn't change the station's identity.
-    /// Optionally includes country code for disambiguating identical streams in different countries.
-    private static func canonicalStreamKey(from urlString: String, country: String? = nil) -> String {
+    /// Optionally includes country code, codec, and bitrate for disambiguating streams.
+    /// V10: Added codec and bitrate to distinguish different quality streams of the same station.
+    private static func canonicalStreamKey(from urlString: String, country: String? = nil, codec: String? = nil, bitrate: Int? = nil) -> String {
         guard var comp = URLComponents(string: urlString) else { return urlString }
 
         // PROTOCOL-INDEPENDENT: Always use HTTPS for ID generation
@@ -69,9 +70,19 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
 
         var result = comp.string ?? urlString
 
-        // Append country code if provided (for disambiguating identical streams)
+        // Append country code if provided (for disambiguating identical streams in different countries)
         if let country = country, !country.isEmpty {
             result += "|country:\(country.uppercased())"
+        }
+
+        // V10: Append codec if provided (for disambiguating different encodings)
+        if let codec = codec, !codec.isEmpty {
+            result += "|codec:\(codec.uppercased())"
+        }
+
+        // V10: Append bitrate if provided and > 0 (for disambiguating different qualities)
+        if let bitrate = bitrate, bitrate > 0 {
+            result += "|bitrate:\(bitrate)"
         }
 
         return result
@@ -100,17 +111,44 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
 
     /// Generates an ID for a given stream URL without creating a full station object.
     /// Useful for testing, migration, and debugging.
-    /// - Parameter streamURL: The stream URL to generate an ID for
-    /// - Returns: The generated station ID (protocol-independent)
-    public static func generateID(for streamURL: String) -> String {
+    /// V10: Now includes country, codec, and bitrate for complete ID generation.
+    /// - Parameters:
+    ///   - streamURL: The stream URL to generate an ID for
+    ///   - country: Optional country code
+    ///   - codec: Optional codec (e.g., "MP3", "AAC")
+    ///   - bitrate: Optional bitrate in kbps
+    /// - Returns: The generated station ID (protocol-independent, quality-aware)
+    public static func generateID(for streamURL: String, country: String? = nil, codec: String? = nil, bitrate: Int? = nil) -> String {
         let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedURL.isEmpty {
             return UUID().uuidString.lowercased()
         }
 
-        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL)
+        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL, country: country, codec: codec, bitrate: bitrate)
         let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
         return uuid.uuidString.lowercased()
+    }
+
+    /// Regenerates the persistent ID using the V10 algorithm (includes country, codec, bitrate).
+    /// Use this method to fix stations with duplicate IDs from older database versions.
+    /// - Returns: A new station with the regenerated persistent ID
+    public func withRegeneratedID() -> CTRKRadioStation {
+        var copy = self
+        let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmedURL.isEmpty {
+            // For stations without streamURL, generate new unique ID
+            copy.persistentID = UUID().uuidString.lowercased()
+            copy._uniqueID = copy.persistentID
+        } else {
+            // V10: Generate ID from streamURL + country + codec + bitrate
+            let key = CTRKRadioStation.canonicalStreamKey(from: streamURL, country: country, codec: codec, bitrate: bitrate)
+            let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
+            copy.persistentID = uuid.uuidString.lowercased()
+            copy._uniqueID = nil
+        }
+
+        return copy
     }
 
     /// Verifies that two URLs generate the same ID (useful for testing protocol-independence)
@@ -176,9 +214,9 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
             return _uniqueID ?? UUID().uuidString.lowercased()
         }
 
-        // Legacy fallback: derive ID from streamURL + country (for V1/V2 databases)
-        // Include country to disambiguate identical streams in different countries
-        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL, country: country)
+        // Legacy fallback: derive ID from streamURL + country + codec + bitrate (for V1/V2 databases)
+        // V10: Include codec and bitrate to disambiguate different quality streams
+        let key = CTRKRadioStation.canonicalStreamKey(from: streamURL, country: country, codec: codec, bitrate: bitrate)
         let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
         return uuid.uuidString.lowercased()
     }
@@ -312,7 +350,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         locationSource: LocationSource? = nil,
         enrichmentStatus: CTRKEnrichmentStatus = .init()
     ) {
-        // V3: Generate persistent ID at creation time
+        // V3/V10: Generate persistent ID at creation time
+        // V10: Now includes country, codec, and bitrate for unique identification
         let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if trimmedURL.isEmpty {
@@ -320,8 +359,9 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
             self._uniqueID = UUID().uuidString.lowercased()
             self.persistentID = self._uniqueID
         } else {
-            // For stations with streamURL, generate ID from streamURL and store it persistently
-            let key = CTRKRadioStation.canonicalStreamKey(from: streamURL)
+            // V10: Generate ID from streamURL + country + codec + bitrate
+            // This ensures different quality streams of the same station get unique IDs
+            let key = CTRKRadioStation.canonicalStreamKey(from: streamURL, country: country, codec: codec, bitrate: bitrate)
             let uuid = CTRKRadioStation.uuidV5(namespace: CTRKRadioStation.idNamespace, name: Data(key.utf8))
             self.persistentID = uuid.uuidString.lowercased()
             self._uniqueID = nil
