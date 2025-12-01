@@ -47,12 +47,20 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
     /// Favicon download status
     public var favicon: EnrichmentState
 
+    /// Copyright check status
+    public var copyrightCheck: EnrichmentState
+
+    /// Homepage enrichment status
+    public var homepage: EnrichmentState
+
     /// Coding keys for JSON encoding/decoding
     private enum CodingKeys: String, CodingKey {
         case healthCheck
         case location
         case genre
         case favicon
+        case copyrightCheck
+        case homepage
     }
 
     /// Initialize with default values (all not started)
@@ -60,15 +68,19 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
         healthCheck: EnrichmentState = .notStarted,
         location: EnrichmentState = .notStarted,
         genre: EnrichmentState = .notStarted,
-        favicon: EnrichmentState = .notStarted
+        favicon: EnrichmentState = .notStarted,
+        copyrightCheck: EnrichmentState = .notStarted,
+        homepage: EnrichmentState = .notStarted
     ) {
         self.healthCheck = healthCheck
         self.location = location
         self.genre = genre
         self.favicon = favicon
+        self.copyrightCheck = copyrightCheck
+        self.homepage = homepage
     }
 
-    /// Custom decoder to handle missing favicon field in V8 databases
+    /// Custom decoder to handle missing fields in older databases
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.healthCheck = try container.decodeIfPresent(EnrichmentState.self, forKey: .healthCheck) ?? .notStarted
@@ -76,5 +88,9 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
         self.genre = try container.decodeIfPresent(EnrichmentState.self, forKey: .genre) ?? .notStarted
         // favicon is new in V9 - default to .notStarted if missing
         self.favicon = try container.decodeIfPresent(EnrichmentState.self, forKey: .favicon) ?? .notStarted
+        // copyrightCheck is new - default to .notStarted if missing
+        self.copyrightCheck = try container.decodeIfPresent(EnrichmentState.self, forKey: .copyrightCheck) ?? .notStarted
+        // homepage is new - default to .notStarted if missing
+        self.homepage = try container.decodeIfPresent(EnrichmentState.self, forKey: .homepage) ?? .notStarted
     }
 }

@@ -226,18 +226,61 @@ public final class CTRKRadioStationDatabasePackager {
         )
         try saveMetadata(metadata, to: tempDir)
 
-        progressHandler?(0.5, "Creating ZIP archive...")
+        progressHandler?(0.5, "Creating ZIP archive with maximum compression...")
 
         // 7. Remove existing output file if present
         if fileManager.fileExists(atPath: outputURL.path) {
             try fileManager.removeItem(at: outputURL)
         }
 
-        // 8. Zip the temp directory
+        // 8. Zip the temp directory with maximum compression
         do {
-            // ZIPFoundation doesn't support progress callback, so we just zip
-            try fileManager.zipItem(at: tempDir, to: outputURL, shouldKeepParent: false)
-            progressHandler?(0.9, "Archive created")
+            // Create archive with deflate compression (best compression for this use case)
+            guard let archive = Archive(url: outputURL, accessMode: .create) else {
+                throw PackagerError.zipFailed(NSError(domain: "CTRadioKit", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to create archive"
+                ]))
+            }
+
+            // Get all files to add
+            let enumerator = fileManager.enumerator(at: tempDir, includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey])
+            var filesToAdd: [(URL, String)] = []
+
+            while let fileURL = enumerator?.nextObject() as? URL {
+                let relativePath = fileURL.path.replacingOccurrences(of: tempDir.path + "/", with: "")
+                let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+
+                if resourceValues.isRegularFile == true {
+                    filesToAdd.append((fileURL, relativePath))
+                } else if resourceValues.isDirectory == true {
+                    // Add directory entry (use Int64 explicitly to avoid ambiguity)
+                    try archive.addEntry(with: relativePath + "/", type: .directory, uncompressedSize: Int64(0), provider: { (position: Int64, size: Int) -> Data in return Data() })
+                }
+            }
+
+            // Add files with deflate compression (maximum compression)
+            let totalFiles = filesToAdd.count
+            for (index, (fileURL, relativePath)) in filesToAdd.enumerated() {
+                let fileData = try Data(contentsOf: fileURL)
+                try archive.addEntry(
+                    with: relativePath,
+                    type: .file,
+                    uncompressedSize: Int64(fileData.count),
+                    compressionMethod: .deflate,
+                    provider: { (position: Int64, size: Int) -> Data in
+                        let start = Int(position)
+                        let end = min(start + size, fileData.count)
+                        return fileData.subdata(in: start..<end)
+                    }
+                )
+
+                let progress = 0.5 + (0.4 * Double(index + 1) / Double(totalFiles))
+                progressHandler?(progress, "Compressing \(relativePath)...")
+            }
+
+            progressHandler?(0.95, "Archive created")
+        } catch let error as PackagerError {
+            throw error
         } catch {
             throw PackagerError.zipFailed(error)
         }

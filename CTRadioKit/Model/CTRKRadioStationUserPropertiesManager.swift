@@ -52,11 +52,19 @@ public final class CTRKRadioStationUserPropertiesManager: ObservableObject {
     /// Toggles favorite status for a station
     public func toggleFavorite(for stationID: String) {
         let current = properties(for: stationID)
+        let wasAlreadyFavorite = current.isFavorite
         userProperties[stationID] = current.withToggledFavorite()
         persist()
 
         // Post notification for UI updates (e.g., CarPlay)
         NotificationCenter.default.post(name: .favoritesDidChange, object: nil)
+
+        // Post notification for analytics tracking
+        if wasAlreadyFavorite {
+            NotificationCenter.default.post(name: .favoriteRemoved, object: stationID)
+        } else {
+            NotificationCenter.default.post(name: .favoriteAdded, object: stationID)
+        }
     }
 
     /// Increments play count for a station
@@ -261,4 +269,6 @@ extension CTRKRadioStationUserPropertiesManager {
 extension Notification.Name {
     public static let favoritesDidChange = Notification.Name("favoritesDidChange")
     public static let recentStationsDidChange = Notification.Name("recentStationsDidChange")
+    public static let favoriteAdded = Notification.Name("favoriteAdded")
+    public static let favoriteRemoved = Notification.Name("favoriteRemoved")
 }
