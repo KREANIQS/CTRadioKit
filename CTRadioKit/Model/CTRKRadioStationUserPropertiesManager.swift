@@ -264,6 +264,96 @@ extension CTRKRadioStationUserPropertiesManager {
     }
 }
 
+// MARK: - V9 to V10 Station ID Migration
+
+extension CTRKRadioStationUserPropertiesManager {
+
+    /// Result of V9 to V10 station ID migration containing statistics
+    public struct V9ToV10MigrationResult {
+        public let migratedCount: Int
+        public let lostFavoriteCount: Int
+        public let lostRecentCount: Int
+
+        public var hasLostFavorites: Bool { lostFavoriteCount > 0 }
+        public var hasLostRecents: Bool { lostRecentCount > 0 }
+        public var hasLostStations: Bool { hasLostFavorites || hasLostRecents }
+    }
+
+    /// Migrates station IDs from V9 to V10 format using the provided mapping.
+    ///
+    /// V9 IDs were computed from URL + Country only, while V10 IDs include Codec + Bitrate.
+    /// This migration maps old V9 IDs to new V10 IDs so users don't lose their favorites.
+    ///
+    /// - Parameters:
+    ///   - mapping: Dictionary mapping V9 station IDs to V10 station IDs
+    ///   - currentStationIDs: Set of all current V10 station IDs in the database
+    /// - Returns: Migration statistics for user feedback
+    public func migrateStationIDsV9ToV10(
+        using mapping: [String: String],
+        currentStationIDs: Set<String>
+    ) -> V9ToV10MigrationResult {
+        let migrationKey = "ctrk.userProperties.migratedV9ToV10"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            print("ℹ️ V9→V10 migration already completed, skipping...")
+            return V9ToV10MigrationResult(migratedCount: 0, lostFavoriteCount: 0, lostRecentCount: 0)
+        }
+
+        print("🔄 Migrating station IDs from V9 to V10...")
+
+        var migratedCount = 0
+        var lostFavoriteCount = 0
+        var lostRecentCount = 0
+        var newUserProperties: [String: CTRKRadioStation.UserProperties] = [:]
+
+        for (stationID, props) in userProperties {
+            // Case 1: ID already exists in V10 database (no migration needed)
+            if currentStationIDs.contains(stationID) {
+                newUserProperties[stationID] = props
+                continue
+            }
+
+            // Case 2: Try to map V9 ID to V10 ID
+            if let newID = mapping[stationID] {
+                // Create new UserProperties with the V10 ID (stationID is immutable)
+                let migratedProps = CTRKRadioStation.UserProperties(
+                    stationID: newID,
+                    isFavorite: props.isFavorite,
+                    playCount: props.playCount,
+                    lastPlayedDate: props.lastPlayedDate,
+                    userNotes: props.userNotes,
+                    customTags: props.customTags
+                )
+                newUserProperties[newID] = migratedProps.withUpdatedSync()
+                migratedCount += 1
+                print("  ✓ Migrated: \(stationID) → \(newID)")
+                continue
+            }
+
+            // Case 3: ID not found in mapping - station might be removed from database
+            if props.isFavorite {
+                lostFavoriteCount += 1
+                print("  ⚠️ Lost favorite: \(stationID)")
+            }
+            if props.playCount > 0 {
+                lostRecentCount += 1
+            }
+            // Don't keep orphaned properties
+        }
+
+        userProperties = newUserProperties
+        persist()
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        print("✅ V9→V10 migration completed: \(migratedCount) migrated, \(lostFavoriteCount) favorites lost")
+
+        return V9ToV10MigrationResult(
+            migratedCount: migratedCount,
+            lostFavoriteCount: lostFavoriteCount,
+            lostRecentCount: lostRecentCount
+        )
+    }
+}
+
 // MARK: - Notification Names
 
 extension Notification.Name {
