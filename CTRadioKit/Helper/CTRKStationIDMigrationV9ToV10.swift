@@ -10,12 +10,13 @@ import CryptoKit
 
 /// Handles one-time migration of radio station IDs from V9 to V10 format.
 ///
-/// The ID generation algorithm changed in V10 to include codec and bitrate:
-/// - **V9**: `UUIDv5(canonicalURL + "|country:" + country)` - URL + Country only
+/// The ID generation algorithm changed in V10 to include country, codec and bitrate:
+/// - **V9**: `UUIDv5(canonicalURL)` - URL only (no country, codec, or bitrate!)
 /// - **V10**: `UUIDv5(canonicalURL + "|country:" + country + "|codec:" + codec + "|bitrate:" + bitrate)`
 ///
-/// IMPORTANT: Both V9 and V10 use the same URL canonicalization (URLComponents with HTTPS normalization).
-/// The only difference is that V10 appends codec and bitrate to the canonical key.
+/// IMPORTANT: V9 init() did NOT include country in the persistent ID generation!
+/// The country parameter was only used in the `id` computed property fallback for V1/V2 databases,
+/// but V3+ databases stored persistentID which was generated WITHOUT country.
 ///
 /// This helper computes the old V9 IDs to create a mapping for migrating user favorites and recents.
 public struct CTRKStationIDMigrationV9ToV10 {
@@ -27,23 +28,21 @@ public struct CTRKStationIDMigrationV9ToV10 {
 
     // MARK: - Public API
 
-    /// Computes the old V9 station ID from stream URL and country.
+    /// Computes the old V9 station ID from stream URL.
     ///
-    /// V9 IDs were computed using the same canonicalization as V10, but without codec and bitrate.
+    /// V9 IDs were computed from URL only - no country, codec, or bitrate!
     /// This uses URLComponents normalization (NOT simple string manipulation).
     ///
-    /// - Parameters:
-    ///   - streamURL: The radio station's stream URL
-    ///   - country: The station's country code (ISO 3166-1 alpha-2)
+    /// - Parameter streamURL: The radio station's stream URL
     /// - Returns: The V9 station ID as a lowercase UUID string
-    public static func computeV9StationID(streamURL: String, country: String?) -> String {
+    public static func computeV9StationID(streamURL: String) -> String {
         let trimmedURL = streamURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedURL.isEmpty {
             return UUID().uuidString.lowercased()
         }
 
-        // Use same canonicalization as V9 CTRKRadioStation (WITHOUT codec/bitrate)
-        let key = canonicalStreamKeyV9(from: streamURL, country: country)
+        // Use same canonicalization as V9 CTRKRadioStation init() - URL only!
+        let key = canonicalStreamKeyV9(from: streamURL)
         let uuid = uuidV5(namespace: idNamespace, name: Data(key.utf8))
         return uuid.uuidString.lowercased()
     }
@@ -57,7 +56,7 @@ public struct CTRKStationIDMigrationV9ToV10 {
         for station in stations {
             guard !station.streamURL.isEmpty else { continue }
 
-            let v9ID = computeV9StationID(streamURL: station.streamURL, country: station.country)
+            let v9ID = computeV9StationID(streamURL: station.streamURL)
 
             // First station wins (bei Duplikaten mit unterschiedlichem Codec/Bitrate)
             if mapping[v9ID] == nil {
@@ -70,16 +69,18 @@ public struct CTRKStationIDMigrationV9ToV10 {
 
     // MARK: - Private Helpers
 
-    /// Canonicalizes a URL using the same algorithm as V9 CTRKRadioStation.
-    /// This is identical to V10's canonicalization, just without codec and bitrate appended.
+    /// Canonicalizes a URL using the same algorithm as V9 CTRKRadioStation init().
+    ///
+    /// IMPORTANT: V9 init() did NOT append country! Only the computed `id` property
+    /// used country as fallback for V1/V2 databases. V3+ stored persistentID without country.
     ///
     /// - PROTOCOL-INDEPENDENT: HTTP/HTTPS normalized to HTTPS
     /// - Host lowercased
     /// - Default ports (80, 443) removed
     /// - Query/Fragment removed
     /// - Path lowercased, trailing slash removed
-    /// - Country appended as "|country:XX"
-    private static func canonicalStreamKeyV9(from urlString: String, country: String?) -> String {
+    /// - NO country, codec, or bitrate appended
+    private static func canonicalStreamKeyV9(from urlString: String) -> String {
         guard var comp = URLComponents(string: urlString) else { return urlString }
 
         // PROTOCOL-INDEPENDENT: Always use HTTPS for ID generation
@@ -106,15 +107,8 @@ public struct CTRKStationIDMigrationV9ToV10 {
         if path.hasSuffix("/") { path.removeLast() }
         comp.path = path.isEmpty ? "/" : path
 
-        var result = comp.string ?? urlString
-
-        // Append country code if provided (for disambiguating identical streams)
-        if let country = country, !country.isEmpty {
-            result += "|country:\(country.uppercased())"
-        }
-
-        // V9 stops here - no codec or bitrate appended
-        return result
+        // V9 init() returned here - NO country, codec, or bitrate!
+        return comp.string ?? urlString
     }
 
     /// Minimal UUIDv5 (SHA-1, name-based) implementation per RFC 4122.
