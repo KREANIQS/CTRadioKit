@@ -33,7 +33,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     private var _uniqueID: String?
 
     // V3: Persistent ID storage - set once at creation, stays stable even if streamURL changes
-    private var persistentID: String?
+    public var persistentID: String?
 
     /// Canonicalize the stream URL so that logically identical URLs yield the same ID.
     /// IMPORTANT: The ID is protocol-independent (HTTP/HTTPS normalized to HTTPS).
@@ -464,12 +464,29 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
             let wrapper = ManualWrapper(isManual: newValue)
             if let data = try? JSONEncoder().encode(wrapper) {
                 let base64 = data.base64EncodedString()
+
+                // Preserve existing user tags (everything after the first marker, if present)
+                var preservedTags: [String] = []
+                if let firstTag = self.tags.first,
+                   let testData = Data(base64Encoded: firstTag),
+                   (try? JSONDecoder().decode(ManualWrapper.self, from: testData)) != nil {
+                    // First element is already a marker, preserve the rest
+                    preservedTags = Array(self.tags.dropFirst())
+                } else {
+                    // No marker yet, preserve all existing tags
+                    preservedTags = self.tags
+                }
+
+                // Build new tags array: marker + preserved user tags
+                var newTags = [base64]
+                newTags.append(contentsOf: preservedTags)
+
                 self = CTRKRadioStation(
                     name: self.name,
                     streamURL: self.streamURL,
                     homepageURL: self.homepageURL,
                     faviconURL: self.faviconURL,
-                    tags: [base64],
+                    tags: newTags,
                     codec: self.codec,
                     bitrate: self.bitrate,
                     country: self.country,
@@ -477,11 +494,23 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
                     lastPlayedDate: self.lastPlayedDate,
                     faviconImage: self.faviconImage,
                     health: self.health,
-                    labels: [base64],
+                    labels: self.labels,
                     curated: self.curated,
                     qualityCheck: self.qualityCheck
                 )
             }
         }
+    }
+
+    /// Returns the user-visible tags (excluding the internal isManual marker)
+    public var userTags: [String] {
+        if let firstTag = self.tags.first,
+           let testData = Data(base64Encoded: firstTag),
+           (try? JSONDecoder().decode(ManualWrapper.self, from: testData)) != nil {
+            // First element is a marker, return the rest
+            return Array(self.tags.dropFirst())
+        }
+        // No marker, return all tags
+        return self.tags
     }
 }

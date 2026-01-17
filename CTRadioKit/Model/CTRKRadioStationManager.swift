@@ -32,6 +32,11 @@ public final class CTRKRadioStationManager: ObservableObject {
     /// Database format version (e.g., 5 for Version 5)
     @Published public var databaseVersion: Int = 0
 
+    /// All stations including manual stations (official + user-created)
+    public var allStationsIncludingManual: [CTRKRadioStation] {
+        allStations + manualStationsManager.allRadioStations()
+    }
+
     private var stationByID: [String: CTRKRadioStation] = [:]
     private var stationByCountry: [String: [CTRKRadioStation]] = [:]
     private var stationByTag: [String: [CTRKRadioStation]] = [:]
@@ -40,7 +45,8 @@ public final class CTRKRadioStationManager: ObservableObject {
     public let favorites: CTRKFavoriteRadioStationsManager
     public let recents: CTRKRecentRadioStationsManager
     public let faviconCache: CTRKRadioStationFavIconManager
-    
+    public let manualStationsManager: CTRKManualStationsManager
+
     public var lastOpenedURL: URL?
 
     private var cancellables = Set<AnyCancellable>()
@@ -50,6 +56,7 @@ public final class CTRKRadioStationManager: ObservableObject {
         self.favorites = CTRKFavoriteRadioStationsManager()
         self.recents = CTRKRecentRadioStationsManager()
         self.faviconCache = CTRKRadioStationFavIconManager()
+        self.manualStationsManager = CTRKManualStationsManager()
     }
 
     // MARK: - Laden & Speichern
@@ -218,7 +225,18 @@ public final class CTRKRadioStationManager: ObservableObject {
         }
     }
 
+    /// Looks up a station by ID, checking both official database and manual stations
     public func station(withID id: String) -> CTRKRadioStation? {
+        // First check official database
+        if let station = stationByID[id] {
+            return station
+        }
+        // Then check manual stations
+        return manualStationsManager.radioStation(withID: id)
+    }
+
+    /// Looks up a station only in the official database (excludes manual stations)
+    public func officialStation(withID id: String) -> CTRKRadioStation? {
         stationByID[id]
     }
 
