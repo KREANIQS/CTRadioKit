@@ -119,6 +119,66 @@ public final class CTRKRadioStationUserPropertiesManager: ObservableObject {
         persist()
     }
 
+    /// Debug info about current state
+    public struct SyncDebugInfo {
+        public let localCount: Int
+        public let iCloudCount: Int
+        public let mergedCount: Int
+        public let localFavoriteCount: Int
+        public let iCloudFavoriteCount: Int
+        public let mergedFavoriteCount: Int
+        public let localIDs: [String]
+        public let iCloudIDs: [String]
+    }
+
+    /// Forces reload from iCloud and returns debug information
+    /// - Returns: Debug info showing local vs iCloud vs merged state
+    public func forceReloadFromiCloud() -> SyncDebugInfo {
+        #if os(iOS) || os(tvOS)
+        NSUbiquitousKeyValueStore.default.synchronize()
+        #endif
+
+        var localProperties: [CTRKRadioStation.UserProperties] = []
+        var iCloudProperties: [CTRKRadioStation.UserProperties] = []
+
+        // Load from UserDefaults
+        if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+           let decoded = try? JSONDecoder().decode([CTRKRadioStation.UserProperties].self, from: data) {
+            localProperties = decoded
+        }
+
+        // Load from iCloud KVS
+        #if os(iOS) || os(tvOS)
+        if let data = NSUbiquitousKeyValueStore.default.data(forKey: iCloudKey),
+           let decoded = try? JSONDecoder().decode([CTRKRadioStation.UserProperties].self, from: data) {
+            iCloudProperties = decoded
+        }
+        #endif
+
+        // Merge both sources with conflict resolution
+        let merged = mergeProperties(local: localProperties, iCloud: iCloudProperties)
+        self.userProperties = Dictionary(uniqueKeysWithValues: merged.map { ($0.stationID, $0) })
+
+        // Create debug info
+        let debugInfo = SyncDebugInfo(
+            localCount: localProperties.count,
+            iCloudCount: iCloudProperties.count,
+            mergedCount: merged.count,
+            localFavoriteCount: localProperties.filter { $0.isFavorite }.count,
+            iCloudFavoriteCount: iCloudProperties.filter { $0.isFavorite }.count,
+            mergedFavoriteCount: merged.filter { $0.isFavorite }.count,
+            localIDs: localProperties.filter { $0.isFavorite }.map { $0.stationID },
+            iCloudIDs: iCloudProperties.filter { $0.isFavorite }.map { $0.stationID }
+        )
+
+        print("🔄 iCloud Sync Debug:")
+        print("   Local: \(debugInfo.localCount) properties, \(debugInfo.localFavoriteCount) favorites")
+        print("   iCloud: \(debugInfo.iCloudCount) properties, \(debugInfo.iCloudFavoriteCount) favorites")
+        print("   Merged: \(debugInfo.mergedCount) properties, \(debugInfo.mergedFavoriteCount) favorites")
+
+        return debugInfo
+    }
+
     // MARK: - Persistence
 
     private func persist() {
@@ -233,20 +293,34 @@ public final class CTRKRadioStationUserPropertiesManager: ObservableObject {
 extension CTRKRadioStationUserPropertiesManager {
     /// Migrates data from old FavoriteRadioStationsManager and RecentRadioStationsManager
     /// This is called once during app upgrade
+    ///
+    /// **v1**: Initial migration (had a bug - was called with empty arrays)
+    /// **v2**: Fixed to actually receive data from legacy managers
     public func migrateFromLegacyManagers(
         favorites: [CTRKRadioStation],
         recents: [CTRKRadioStation]
     ) {
-        let migrationKey = "ctrk.userProperties.didMigrate.v1"
+        let migrationKey = "ctrk.userProperties.didMigrate.v4"  // v4: Reset V9→V10 flag after legacy migration
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
-            print("ℹ️ User properties already migrated, skipping...")
+            print("ℹ️ User properties already migrated (v4), skipping...")
+            return
+        }
+
+        // Skip if no legacy data to migrate
+        guard !favorites.isEmpty || !recents.isEmpty else {
+            print("ℹ️ No legacy data to migrate, marking as done")
+            UserDefaults.standard.set(true, forKey: migrationKey)
             return
         }
 
         print("🔄 Migrating user properties from legacy managers...")
 
         // Migrate favorites
+        print("📋 Migrating \(favorites.count) favorites:")
         for station in favorites {
+            print("   → '\(station.name)' (ID: \(station.id))")
+            print("     Country: \(station.country), Codec: \(station.codec), Bitrate: \(station.bitrate)")
+            print("     persistentID: \(station.persistentID ?? "nil")")
             var props = properties(for: station.id)
             props.isFavorite = true
             if let lastPlayed = station.lastPlayedDate {
@@ -257,7 +331,9 @@ extension CTRKRadioStationUserPropertiesManager {
         }
 
         // Migrate recents (only update play count/date, don't override favorites)
+        print("📋 Migrating \(recents.count) recents:")
         for station in recents {
+            print("   → '\(station.name)' (ID: \(station.id))")
             var props = properties(for: station.id)
             if let lastPlayed = station.lastPlayedDate {
                 props.lastPlayedDate = lastPlayed
@@ -268,6 +344,15 @@ extension CTRKRadioStationUserPropertiesManager {
 
         persist()
         UserDefaults.standard.set(true, forKey: migrationKey)
+
+        // IMPORTANT: Reset V9→V10 migration flag so it runs after legacy migration
+        // The legacy favorites may have V9-style IDs that need to be mapped to V10-style
+        let v9ToV10MigrationKey = "ctrk.userProperties.migratedV9ToV10"
+        if UserDefaults.standard.bool(forKey: v9ToV10MigrationKey) {
+            print("🔄 Resetting V9→V10 migration flag (legacy data was just migrated)")
+            UserDefaults.standard.set(false, forKey: v9ToV10MigrationKey)
+        }
+
         print("✅ Migration complete: \(favorites.count) favorites, \(recents.count) recents")
     }
 }
@@ -289,12 +374,16 @@ extension CTRKRadioStationUserPropertiesManager {
 
     /// Migrates station IDs from V9 to V10 format using the provided mapping.
     ///
-    /// V9 IDs were computed from URL + Country only, while V10 IDs include Codec + Bitrate.
-    /// This migration maps old V9 IDs to new V10 IDs so users don't lose their favorites.
+    /// **ID Algorithm Versions** (independent from Database Format Version!):
+    /// - V9-style: `UUIDv5(canonicalURL)` - URL only
+    /// - V10-style: `UUIDv5(canonicalURL + "|country:" + country + "|codec:" + codec + "|bitrate:" + bitrate)`
+    ///
+    /// This migration handles favorites that may have been created with V9-style IDs,
+    /// mapping them to their corresponding V10-style IDs in the current database.
     ///
     /// - Parameters:
     ///   - mapping: Dictionary mapping V9 station IDs to V10 station IDs
-    ///   - currentStationIDs: Set of all current V10 station IDs in the database
+    ///   - currentStationIDs: Set of all current station IDs in the database
     /// - Returns: Migration statistics for user feedback
     public func migrateStationIDsV9ToV10(
         using mapping: [String: String],
