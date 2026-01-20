@@ -244,6 +244,10 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
     // Enrichment status tracking (Version 7+)
     public var enrichmentStatus: CTRKEnrichmentStatus
 
+    // Credits for station contribution (Version 11+)
+    // Used to attribute manual station submissions to contributors
+    public var credits: String
+
     public var faviconImage: Data?
     
     enum CodingKeys: String, CodingKey {
@@ -269,6 +273,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         case locationLongitude
         case locationSource
         case enrichmentStatus // V7: Enrichment status tracking
+        case credits // V11: Contribution credits
     }
     
     public init(from decoder: Decoder) throws {
@@ -295,6 +300,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         self.locationSource = try container.decodeIfPresent(LocationSource.self, forKey: .locationSource)
         // V7: Enrichment status (defaults to .notStarted for backward compatibility)
         self.enrichmentStatus = try container.decodeIfPresent(CTRKEnrichmentStatus.self, forKey: .enrichmentStatus) ?? CTRKEnrichmentStatus()
+        // V11: Credits (defaults to empty string for backward compatibility)
+        self.credits = try container.decodeIfPresent(String.self, forKey: .credits) ?? ""
         #if os(iOS)
         self.faviconImage = nil
         #elseif os(macOS)
@@ -326,6 +333,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         try container.encodeIfPresent(locationLongitude, forKey: .locationLongitude)
         try container.encodeIfPresent(locationSource, forKey: .locationSource)
         try container.encode(enrichmentStatus, forKey: .enrichmentStatus)
+        try container.encode(credits, forKey: .credits)
     }
     
     public init(
@@ -348,7 +356,8 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         locationLatitude: Double? = nil,
         locationLongitude: Double? = nil,
         locationSource: LocationSource? = nil,
-        enrichmentStatus: CTRKEnrichmentStatus = .init()
+        enrichmentStatus: CTRKEnrichmentStatus = .init(),
+        credits: String = ""
     ) {
         // V3/V10: Generate persistent ID at creation time
         // V10: Now includes country, codec, and bitrate for unique identification
@@ -386,6 +395,7 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
         self.locationLongitude = locationLongitude
         self.locationSource = locationSource
         self.enrichmentStatus = enrichmentStatus
+        self.credits = credits
         #if os(iOS)
         if let image = faviconImage as? UIImage {
             self.faviconImage = image.pngData()
@@ -496,7 +506,13 @@ public struct CTRKRadioStation: Codable, Identifiable, Equatable, Sendable {
                     health: self.health,
                     labels: self.labels,
                     curated: self.curated,
-                    qualityCheck: self.qualityCheck
+                    qualityCheck: self.qualityCheck,
+                    locationName: self.locationName,
+                    locationLatitude: self.locationLatitude,
+                    locationLongitude: self.locationLongitude,
+                    locationSource: self.locationSource,
+                    enrichmentStatus: self.enrichmentStatus,
+                    credits: self.credits
                 )
             }
         }

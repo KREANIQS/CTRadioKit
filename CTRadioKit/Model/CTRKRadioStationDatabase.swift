@@ -20,7 +20,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
     /// Version 7: Added enrichmentStatus tracking, removed health.lastCheck
     /// Version 8: Added 'planned' state to EnrichmentState for better queue management
     /// Version 9: Added favicon field to EnrichmentStatus for favicon download tracking
-    public static let currentVersion = 9
+    /// Version 10: Added metadata field to EnrichmentStatus and credits field to stations
+    public static let currentVersion = 10
 
     /// Database format version
     public var version: Int
@@ -105,6 +106,8 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
             return "Version 8 (Planned state for enrichment queue)"
         case 9:
             return "Version 9 (Favicon download tracking)"
+        case 10:
+            return "Version 10 (Metadata enrichment & credits field)"
         default:
             return "Version \(version) (Unknown)"
         }
@@ -334,6 +337,24 @@ public struct CTRKRadioStationDatabase: Codable, Sendable {
         return CTRKRadioStationDatabase(
             stations: migratedStations,
             version: 9,
+            metadata: metadata
+        )
+    }
+
+    /// Migrates from V9 to V10 by adding metadata field to EnrichmentStatus and credits field to stations
+    /// V10 adds metadata enrichment tracking and credits field for station contributions
+    /// - Returns: Database with updated enrichmentStatus (metadata field initialized to .notStarted)
+    public func migrateToV10() -> CTRKRadioStationDatabase {
+        guard version == 9 else { return self }
+
+        // The metadata field in enrichmentStatus is automatically initialized to .notStarted by the decoder
+        // when decoding existing V9 data, since it has a default value.
+        // The credits field in CTRKRadioStation is also initialized to empty string by the decoder.
+        // We just need to bump the version - no actual data transformation required.
+
+        return CTRKRadioStationDatabase(
+            stations: stations,
+            version: 10,
             metadata: metadata
         )
     }

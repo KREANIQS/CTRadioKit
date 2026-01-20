@@ -32,6 +32,9 @@ extension CTRKRadioStation {
         /// Custom user-defined tags/labels (for future features)
         public var customTags: [String]
 
+        /// Total listening duration in seconds (accumulated across all sessions)
+        public var totalListeningDuration: TimeInterval
+
         // MARK: - Sync Metadata
 
         /// Timestamp when these properties were last modified (for conflict resolution)
@@ -49,6 +52,7 @@ extension CTRKRadioStation {
             lastPlayedDate: Date? = nil,
             userNotes: String? = nil,
             customTags: [String] = [],
+            totalListeningDuration: TimeInterval = 0,
             syncTimestamp: Date = Date(),
             deviceID: String = Self.currentDeviceID()
         ) {
@@ -58,6 +62,7 @@ extension CTRKRadioStation {
             self.lastPlayedDate = lastPlayedDate
             self.userNotes = userNotes
             self.customTags = customTags
+            self.totalListeningDuration = totalListeningDuration
             self.syncTimestamp = syncTimestamp
             self.deviceID = deviceID
         }
@@ -106,6 +111,15 @@ extension CTRKRadioStation {
         public func withToggledFavorite() -> UserProperties {
             var copy = self
             copy.isFavorite.toggle()
+            copy.syncTimestamp = Date()
+            copy.deviceID = Self.currentDeviceID()
+            return copy
+        }
+
+        /// Adds listening duration (in seconds) to the total
+        public func withAddedListeningDuration(_ duration: TimeInterval) -> UserProperties {
+            var copy = self
+            copy.totalListeningDuration += max(0, duration) // Ensure non-negative
             copy.syncTimestamp = Date()
             copy.deviceID = Self.currentDeviceID()
             return copy

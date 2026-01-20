@@ -53,6 +53,9 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
     /// Homepage enrichment status
     public var homepage: EnrichmentState
 
+    /// Metadata enrichment status (V10+)
+    public var metadata: EnrichmentState
+
     /// Coding keys for JSON encoding/decoding
     private enum CodingKeys: String, CodingKey {
         case healthCheck
@@ -61,6 +64,7 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
         case favicon
         case copyrightCheck
         case homepage
+        case metadata
     }
 
     /// Initialize with default values (all not started)
@@ -70,7 +74,8 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
         genre: EnrichmentState = .notStarted,
         favicon: EnrichmentState = .notStarted,
         copyrightCheck: EnrichmentState = .notStarted,
-        homepage: EnrichmentState = .notStarted
+        homepage: EnrichmentState = .notStarted,
+        metadata: EnrichmentState = .notStarted
     ) {
         self.healthCheck = healthCheck
         self.location = location
@@ -78,6 +83,7 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
         self.favicon = favicon
         self.copyrightCheck = copyrightCheck
         self.homepage = homepage
+        self.metadata = metadata
     }
 
     /// Custom decoder to handle missing fields in older databases
@@ -92,5 +98,7 @@ public struct CTRKEnrichmentStatus: Codable, Sendable, Equatable {
         self.copyrightCheck = try container.decodeIfPresent(EnrichmentState.self, forKey: .copyrightCheck) ?? .notStarted
         // homepage is new - default to .notStarted if missing
         self.homepage = try container.decodeIfPresent(EnrichmentState.self, forKey: .homepage) ?? .notStarted
+        // metadata is new in V10 - default to .notStarted if missing
+        self.metadata = try container.decodeIfPresent(EnrichmentState.self, forKey: .metadata) ?? .notStarted
     }
 }

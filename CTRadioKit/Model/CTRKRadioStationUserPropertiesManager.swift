@@ -77,6 +77,14 @@ public final class CTRKRadioStationUserPropertiesManager: ObservableObject {
         NotificationCenter.default.post(name: .recentStationsDidChange, object: nil)
     }
 
+    /// Adds listening duration (in seconds) for a station
+    public func addListeningDuration(_ duration: TimeInterval, for stationID: String) {
+        guard duration > 0 else { return }
+        let current = properties(for: stationID)
+        userProperties[stationID] = current.withAddedListeningDuration(duration)
+        persist()
+    }
+
     /// Checks if a station is marked as favorite
     public func isFavorite(_ stationID: String) -> Bool {
         return userProperties[stationID]?.isFavorite ?? false
@@ -321,7 +329,8 @@ extension CTRKRadioStationUserPropertiesManager {
                     playCount: props.playCount,
                     lastPlayedDate: props.lastPlayedDate,
                     userNotes: props.userNotes,
-                    customTags: props.customTags
+                    customTags: props.customTags,
+                    totalListeningDuration: props.totalListeningDuration
                 )
                 newUserProperties[newID] = migratedProps.withUpdatedSync()
                 migratedCount += 1
